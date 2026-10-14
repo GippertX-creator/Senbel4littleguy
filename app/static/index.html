@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>小家伙的小家伙 · 基础医学学习工作台</title>
+    <link rel="icon" type="image/png" href="/assets/kitten.png" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/cat.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <a class="brand" href="#home" aria-label="小家伙的小家伙首页">
+          <span class="brand-mark"
+            ><img src="/assets/kitten.png" alt=""
+          /></span>
+          <span class="brand-name"
+            >小家伙的小家伙<small>A LITTLE STUDY BUDDY</small></span
+          >
+        </a>
+        <div class="workspace-label">我的学习工作台 <span>LOCAL</span></div>
+        <nav id="navigation" aria-label="主要导航"></nav>
+        <div class="sidebar-bottom">
+          <span class="status-dot"></span> 本地运行 · 资料由你管理<br /><small
+            >一步理解，一次进步。</small
+          >
+        </div>
+      </aside>
+      <div class="main-shell">
+        <header class="topbar">
+          <button
+            class="icon-button mobile-menu"
+            id="menu-button"
+            aria-label="展开导航"
+          >
+            ☰
+          </button>
+          <div class="breadcrumb">
+            学习工作台 <span>/</span> <strong id="breadcrumb">概览</strong>
+          </div>
+          <div class="topbar-right">
+            <label class="course-switch"
+              >当前课程
+              <select id="course-select" aria-label="当前课程"></select></label
+            ><button class="connection" id="api-status" type="button">
+              <span class="status-dot off"></span> API 未配置</button
+            ><a
+              class="avatar"
+              href="#chat"
+              title="找小猫助教"
+              aria-label="找小猫助教"
+              ><img src="/assets/kitten.png" alt=""
+            /></a>
+          </div>
+        </header>
+        <main id="content" tabindex="-1">
+          <div class="loading">正在打开工作台…</div>
+        </main>
+        <footer>
+          小家伙的小家伙 · 基础医学学习工作台
+          <span>一点点理解，有小猫陪你</span>
+        </footer>
+      </div>
+    </div>
+    <dialog id="source-dialog">
+      <div class="dialog-heading">
+        <h2 id="source-title">材料来源</h2>
+        <button class="icon-button" id="close-dialog" aria-label="关闭">
+          ×
+        </button>
+      </div>
+      <div id="source-content"></div>
+    </dialog>
+    <section
+      id="cat-companion"
+      class="cat-companion"
+      data-cat
+      data-cat-state="idle"
+      data-expanded="false"
+      aria-label="小猫学习伙伴"
+    >
+      <div class="companion-bubble" id="cat-bubble">
+        <div class="companion-heading">
+          <strong>你的小猫助教</strong
+          ><button
+            type="button"
+            class="icon-button"
+            data-action="close-cat"
+            aria-label="收起猫咪提示"
+          >
+            ×
+          </button>
+        </div>
+        <p id="cat-message" role="status" aria-live="polite">
+          今天也陪你一点点弄懂。
+        </p>
+        <div class="companion-actions">
+          <a href="#chat">和小猫聊聊 →</a
+          ><button
+            type="button"
+            data-action="toggle-cat-motion"
+            id="cat-motion-toggle"
+            aria-pressed="true"
+          >
+            暂停动画
+          </button>
+        </div>
+      </div>
+      <button
+        type="button"
+        class="cat-companion-button"
+        data-action="pet-cat"
+        aria-label="摸摸小猫，打开学习伙伴"
+        aria-expanded="false"
+      >
+        <span class="cat-love" aria-hidden="true">♥</span>
+        <span class="cat-thought" aria-hidden="true"
+          ><i></i><i></i><i></i
+        ></span>
+        <img
+          class="cat-image"
+          src="/assets/kitten.png"
+          alt="抱着课本的小猫智能体"
+        />
+      </button>
+      <span class="companion-caption"
+        >小猫助教 · <span class="cat-state-label">陪伴中</span></span
+      >
+    </section>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
