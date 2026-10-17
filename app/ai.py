@@ -56,7 +56,7 @@ def public_config():
     return {**config(), "key_present": bool(API_KEY)}
 
 
-async def complete(messages, max_tokens=5000):
+async def _request_choice(messages, max_tokens):
     settings = config()
     url = settings["base_url"] + "/chat/completions"
     host = urlsplit(url).hostname
@@ -79,18 +79,42 @@ async def complete(messages, max_tokens=5000):
             }.get(response.status_code, f"API 返回 HTTP {response.status_code}，请检查服务状态。")
             raise HTTPException(502, detail)
         body = response.json()
-        if body.get("choices", [{}])[0].get("finish_reason") == "length":
-            raise HTTPException(502, "模型输出被长度限制截断，请缩小材料范围或减少题目数量。")
-        content = body["choices"][0]["message"]["content"]
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("empty response")
-        return content
+        if not isinstance(body, dict) or not isinstance(body.get("choices"), list):
+            raise ValueError("invalid choices")
+        choice = body["choices"][0]
+        if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
+            raise ValueError("invalid message")
+        return choice
     except httpx.TimeoutException as exc:
         raise HTTPException(504, "API 请求超时，请检查连接或缩小材料范围。") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(502, "无法连接 API，请检查地址、网络与 HTTPS 证书。") from exc
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         raise HTTPException(502, "服务未返回兼容的 Chat Completions 响应。") from exc
+
+
+async def complete(messages, max_tokens=5000):
+    choice = await _request_choice(messages, max_tokens)
+    if choice.get("finish_reason") == "length":
+        raise HTTPException(502, "模型输出被长度限制截断，请缩小材料范围或减少题目数量。")
+    content = choice["message"].get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise HTTPException(502, "服务未返回兼容的 Chat Completions 响应。")
+    return content
+
+
+async def test_connection():
+    # Keep the probe inexpensive. Reasoning models may spend this entire budget
+    # before producing visible text; that still establishes API connectivity.
+    choice = await _request_choice([{"role": "user", "content": "Reply with OK only."}], max_tokens=128)
+    message = choice["message"]
+    content = message.get("content")
+    if choice.get("finish_reason") == "length" and "content" in message and (content is None or isinstance(content, str)):
+        return {"ok": True, "generation_verified": False,
+                "message": "API 连接成功，模型已响应；短测试达到输出上限，尚未验证完整内容生成。可先用少量材料试生成。"}
+    if not isinstance(content, str) or not content.strip():
+        raise HTTPException(502, "API 已响应，但没有可用的测试内容。请确认模型支持 Chat Completions 文本输出。")
+    return {"ok": True, "generation_verified": True, "message": "API 请求成功；可以开始学习。"}
 
 
 def context(course, material_ids, topic):

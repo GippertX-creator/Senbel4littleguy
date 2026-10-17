@@ -134,8 +134,7 @@ def save_settings(payload: ai.Settings):
 
 @app.post("/api/settings/test")
 async def test_api():
-    await ai.complete([{"role": "user", "content": "Reply with OK only."}], max_tokens=20)
-    return {"ok": True, "message": "API 请求成功；可以开始学习。"}
+    return await ai.test_connection()
 
 
 @app.get("/api/materials")

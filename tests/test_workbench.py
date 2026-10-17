@@ -28,6 +28,7 @@ class WorkbenchTests(unittest.TestCase):
         self.client = TestClient(app)
         self.client.__enter__()
         self.response = None
+        self.completion_body = None
         self.status = 200
         self.captured = []
         self.transport = httpx.MockTransport(self.upstream)
@@ -47,6 +48,8 @@ class WorkbenchTests(unittest.TestCase):
 
     def upstream(self, request):
         self.captured.append((request.url, request.headers, json.loads(request.content)))
+        if self.completion_body is not None:
+            return httpx.Response(self.status, json=self.completion_body)
         return httpx.Response(self.status, json={"choices":[{"finish_reason":"stop", "message":{"content":self.response if isinstance(self.response,str) else json.dumps(self.response,ensure_ascii=False)}}]})
 
     def upload(self, name, data, kind="course", course="biochemistry"):
@@ -106,11 +109,46 @@ class WorkbenchTests(unittest.TestCase):
 
     def test_api_request_contract_and_test_connection(self):
         self.response = "OK"
-        self.assertEqual(self.client.post("/api/settings/test").status_code,200)
+        result = self.client.post("/api/settings/test")
+        self.assertEqual(result.status_code,200)
+        self.assertTrue(result.json()["generation_verified"])
         url,headers,body = self.captured[-1]
         self.assertEqual(str(url),"https://example.com/v1/chat/completions")
         self.assertEqual(headers["authorization"],"Bearer test-only-key")
         self.assertEqual(body["model"],"test-model")
+        self.assertEqual(body["messages"], [{"role":"user", "content":"Reply with OK only."}])
+        self.assertEqual(body["max_tokens"],128)
+
+    def test_connection_distinguishes_truncation_from_generation(self):
+        for content in [None, "", "O"]:
+            with self.subTest(content=content):
+                self.completion_body = {"choices":[{"finish_reason":"length", "message":{
+                    "content":content, "reasoning_content":"private reasoning must not be returned"}}]}
+                result = self.client.post("/api/settings/test")
+                self.assertEqual(result.status_code,200,result.text)
+                self.assertTrue(result.json()["ok"])
+                self.assertFalse(result.json()["generation_verified"])
+                self.assertIn("尚未验证完整内容生成",result.json()["message"])
+                self.assertNotIn("private reasoning",result.text)
+                self.assertNotIn("test-only-key",result.text)
+
+    def test_truncated_generation_is_rejected_without_saving(self):
+        self.completion_body = {"choices":[{"finish_reason":"length", "message":{"content":"{\"summary\":\"unfinished"}}]}
+        result = self.client.post("/api/study/outline",json=self.request())
+        self.assertEqual(result.status_code,502)
+        self.assertIn("截断",result.json()["detail"])
+        with db.connect() as con:
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0],0)
+        self.assertEqual(self.captured[-1][2]["max_tokens"],5000)
+
+    def test_connection_rejects_malformed_or_empty_responses(self):
+        for body in [[], {}, {"choices":[]}, {"choices":[None]}, {"choices":[{"message":[]}]},
+                     {"choices":[{"finish_reason":"length","message":{}}]},
+                     {"choices":[{"finish_reason":"stop","message":{"content":""}}]},
+                     {"choices":[{"finish_reason":"stop","message":{"content":None,"reasoning_content":"thinking only"}}]}]:
+            with self.subTest(body=body):
+                self.completion_body = body
+                self.assertEqual(self.client.post("/api/settings/test").status_code,502)
 
     def test_invalid_api_addresses_and_clear_key(self):
         for base in ["http://example.com/v1", "https://user:password@example.com/v1", "https://example.com/v1/chat/completions", "https://example.com:invalid/v1", "https://[invalid/v1"]:
@@ -120,11 +158,14 @@ class WorkbenchTests(unittest.TestCase):
         self.assertFalse(ai.API_KEY)
 
     def test_upstream_errors_are_redacted(self):
-        self.status=401;self.response="should not be shown"
-        result=self.client.post("/api/settings/test")
-        self.assertEqual(result.status_code,502)
-        self.assertNotIn("should not be shown",result.text)
-        self.assertNotIn("test-only-key",result.text)
+        self.response="should not be shown"
+        for status in [401,403,404,429]:
+            with self.subTest(status=status):
+                self.status=status
+                result=self.client.post("/api/settings/test")
+                self.assertEqual(result.status_code,502)
+                self.assertNotIn("should not be shown",result.text)
+                self.assertNotIn("test-only-key",result.text)
 
     def test_reject_cross_origin_and_untrusted_host(self):
         response=self.client.post("/api/settings/test",headers={"Origin":"https://evil.example"})
