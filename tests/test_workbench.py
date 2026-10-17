@@ -29,6 +29,7 @@ class WorkbenchTests(unittest.TestCase):
         self.client.__enter__()
         self.response = None
         self.completion_body = None
+        self.completion_queue = []
         self.status = 200
         self.captured = []
         self.transport = httpx.MockTransport(self.upstream)
@@ -48,6 +49,8 @@ class WorkbenchTests(unittest.TestCase):
 
     def upstream(self, request):
         self.captured.append((request.url, request.headers, json.loads(request.content)))
+        if self.completion_queue:
+            return httpx.Response(self.status, json=self.completion_queue.pop(0))
         if self.completion_body is not None:
             return httpx.Response(self.status, json=self.completion_body)
         return httpx.Response(self.status, json={"choices":[{"finish_reason":"stop", "message":{"content":self.response if isinstance(self.response,str) else json.dumps(self.response,ensure_ascii=False)}}]})
@@ -61,6 +64,10 @@ class WorkbenchTests(unittest.TestCase):
 
     def request(self, extra=None):
         return {"course":"biochemistry", "material_ids":[self.material], **(extra or {})}
+
+    def completion(self, content, finish="stop"):
+        return {"choices":[{"finish_reason":finish,"message":{"content":content,
+                "reasoning_content":"private reasoning"}}]}
 
     def create_quiz(self):
         self.response = {"questions":[self.question(),self.question()]}
@@ -139,7 +146,86 @@ class WorkbenchTests(unittest.TestCase):
         self.assertIn("截断",result.json()["detail"])
         with db.connect() as con:
             self.assertEqual(con.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0],0)
-        self.assertEqual(self.captured[-1][2]["max_tokens"],5000)
+        self.assertEqual([r[2]["max_tokens"] for r in self.captured],[8192,16384])
+
+    def test_outline_and_chat_recover_from_reasoning_truncation(self):
+        self.client.put('/api/settings',json={'base_url':'https://api.deepseek.com','model':'user-selected-model'})
+        outputs = [('/api/study/outline', {}, {
+            'summary':'酶活性实验', 'items':[{'term':'温度','explanation':'酶活性受温度影响','importance':'核心',
+            'recall_question':'如何控制变量？','sources':[self.ref.copy()]}], 'connections':[]}),
+            ('/api/study/chat', {'message':'为什么保持其他条件一致？'}, {
+            'answer':'便于比较温度的影响。','follow_up':'你会如何设置对照？','sources':[self.ref.copy()]})]
+        for endpoint, extra, output in outputs:
+            with self.subTest(endpoint=endpoint):
+                self.captured.clear()
+                self.completion_queue = [self.completion(None,'length'),self.completion(json.dumps(output,ensure_ascii=False))]
+                result = self.client.post(endpoint,json=self.request(extra))
+                self.assertEqual(result.status_code,200,result.text)
+                self.assertNotIn('private reasoning',result.text)
+                self.assertEqual([r[2]['max_tokens'] for r in self.captured],[8192,16384])
+                for _,_,body in self.captured:
+                    self.assertEqual(body['thinking'],{'type':'disabled'})
+                    self.assertEqual(body['response_format'],{'type':'json_object'})
+                    self.assertNotIn('temperature',body)
+                self.assertEqual(self.captured[0][2]['messages'],self.captured[1][2]['messages'])
+        with db.connect() as con:
+            rows = con.execute('SELECT data FROM artifacts').fetchall()
+        self.assertEqual(len(rows),2)
+        self.assertNotIn('private reasoning',''.join(r[0] for r in rows))
+
+    def test_output_settings_persist_and_old_settings_gain_defaults(self):
+        with db.connect() as con:
+            con.execute('UPDATE settings SET data=? WHERE id=1',(json.dumps({'base_url':'https://api.deepseek.com','model':'existing-model'}),))
+        settings = self.client.get('/api/settings').json()
+        self.assertEqual(settings['model'],'existing-model')
+        self.assertEqual(settings['max_output_tokens'],8192)
+        self.assertEqual(settings['deepseek_mode'],'fast')
+        self.assertTrue(settings['key_present'])
+        result = self.client.put('/api/settings',json={**settings,'max_output_tokens':16000,'deepseek_mode':'thinking'})
+        self.assertEqual(result.status_code,200)
+        self.assertEqual(self.client.get('/api/settings').json()['max_output_tokens'],16000)
+        self.assertEqual(self.client.get('/api/settings').json()['deepseek_mode'],'thinking')
+        for values in [{'max_output_tokens':511},{'max_output_tokens':65537},{'deepseek_mode':'invalid'}]:
+            self.assertEqual(self.client.put('/api/settings',json={**settings,**values}).status_code,422)
+
+    def test_deepseek_modes_and_extensions_are_limited_to_official_host(self):
+        self.response = 'OK'
+        for mode, expected in [('fast',{'type':'disabled'}),('thinking',{'type':'enabled'}),('default',None)]:
+            self.client.put('/api/settings',json={'base_url':'https://api.deepseek.com/v1','model':'chosen-model','deepseek_mode':mode})
+            self.assertEqual(self.client.post('/api/settings/test').status_code,200)
+            self.assertEqual(self.captured[-1][2].get('thinking'),expected)
+            self.assertNotIn('response_format',self.captured[-1][2])
+        for host in ['example.com','api.deepseek.com.example.com']:
+            self.client.put('/api/settings',json={'base_url':f'https://{host}/v1','model':'chosen-model','deepseek_mode':'thinking'})
+            self.assertEqual(self.client.post('/api/settings/test').status_code,200)
+            self.assertNotIn('thinking',self.captured[-1][2])
+            self.assertNotIn('response_format',self.captured[-1][2])
+            self.assertEqual(self.captured[-1][2]['temperature'],0.2)
+
+    def test_retry_budget_is_bounded_and_test_connection_does_not_retry(self):
+        self.completion_body = self.completion('', 'length')
+        for budget, expected in [(40000,[40000,65536]),(65536,[65536])]:
+            self.client.put('/api/settings',json={'base_url':'https://example.com/v1','model':'chosen','max_output_tokens':budget})
+            self.captured.clear()
+            result = self.client.post('/api/study/chat',json=self.request({'message':'温度的作用？'}))
+            self.assertEqual(result.status_code,502)
+            self.assertIn('未保存',result.json()['detail'])
+            self.assertEqual([r[2]['max_tokens'] for r in self.captured],expected)
+        self.captured.clear()
+        self.assertEqual(self.client.post('/api/settings/test').status_code,200)
+        self.assertEqual([r[2]['max_tokens'] for r in self.captured],[128])
+
+    def test_no_generation_retry_on_api_error_or_invalid_json(self):
+        for status in [400,401,429]:
+            self.status = status
+            self.captured.clear()
+            self.assertEqual(self.client.post('/api/study/outline',json=self.request()).status_code,502)
+            self.assertEqual(len(self.captured),1)
+        self.status = 200
+        self.response = 'not JSON'
+        self.captured.clear()
+        self.assertEqual(self.client.post('/api/study/outline',json=self.request()).status_code,502)
+        self.assertEqual(len(self.captured),1)
 
     def test_connection_rejects_malformed_or_empty_responses(self):
         for body in [[], {}, {"choices":[]}, {"choices":[None]}, {"choices":[{"message":[]}]},

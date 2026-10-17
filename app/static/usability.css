@@ -1,4 +1,17 @@
 /* Reading and task flow: keep the soft palette, give text a clear foreground. */
+.generation-settings {
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.generation-settings > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.generation-settings .field {
+  margin-top: 16px;
+}
 :root {
   --font-scale: 1;
   --ink: #30283d;

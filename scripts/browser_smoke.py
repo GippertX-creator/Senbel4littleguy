@@ -68,7 +68,13 @@ class ModelStub(BaseHTTPRequestHandler):
         else:
             result = 'OK'
         content = result if isinstance(result,str) else json.dumps(result,ensure_ascii=False)
-        body = json.dumps({'choices':[{'finish_reason':'stop','message':{'content':content}}]},ensure_ascii=False).encode()
+        if payload['model'] == 'truncation-test-model' and payload['max_tokens'] == 4096 and any(
+                title in prompt for title in ['"title": "Outline"','"title": "Answer"']):
+            self.server.truncated_probes += 1
+            completion = {'finish_reason':'length','message':{'content':None,'reasoning_content':'simulated thinking'}}
+        else:
+            completion = {'finish_reason':'stop','message':{'content':content}}
+        body = json.dumps({'choices':[completion]},ensure_ascii=False).encode()
         self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
 
 
@@ -83,6 +89,7 @@ def main():
     parser.add_argument('--browser-path',default=shutil.which('chromium'))
     args = parser.parse_args()
     server = ThreadingHTTPServer(('127.0.0.1',0),ModelStub)
+    server.truncated_probes = 0
     threading.Thread(target=server.serve_forever,daemon=True).start()
     errors = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -143,6 +150,10 @@ def main():
                     nav('settings')
                     page.locator('[name=base_url]').fill(f'http://127.0.0.1:{server.server_port}/v1')
                     page.locator('[name=model]').fill('browser-test-model')
+                    page.locator('.generation-settings summary').click()
+                    expect(page.locator('[name=max_output_tokens]')).to_have_value('8192')
+                    page.locator('[name=max_output_tokens]').fill('4096')
+                    page.locator('[name=deepseek_mode]').select_option('default')
                     page.locator('[name=api_key]').fill('browser-test-only')
                     page.locator('[data-action=toggle-key]').click()
                     expect(page.locator('[name=api_key]')).to_have_attribute('type','text')
@@ -151,13 +162,15 @@ def main():
                     page.locator('[data-action=test-api]').click()
                     expect(page.locator('#cat-companion')).to_have_attribute('data-cat-state','thinking')
                     expect(page.locator('#toast')).to_contain_text('API 请求成功')
+                    expect(page.locator('[name=max_output_tokens]')).to_have_value('4096')
+                    expect(page.locator('[name=deepseek_mode]')).to_have_value('default')
                     expect(page.locator('#cat-companion')).to_have_attribute('data-cat-state','success')
                     expect(page.locator('#cat-bubble')).not_to_be_visible()
                     page.locator('[name=model]').fill('invalid-model')
                     page.locator('[data-action=test-api]').click()
                     expect(page.locator('#cat-companion')).to_have_attribute('data-cat-state','error')
                     expect(page.locator('#task-error')).to_contain_text('API 密钥无效')
-                    page.locator('[name=model]').fill('browser-test-model')
+                    page.locator('[name=model]').fill('truncation-test-model')
                     page.locator('[data-action=test-api]').click()
                     page.locator('.cat-companion-button').click()
                     expect(page.locator('#cat-companion')).to_have_attribute('data-cat-state','thinking')
@@ -249,10 +262,14 @@ def main():
                         page.screenshot(path=str(args.screenshot.with_name(args.screenshot.stem+'-mobile.png')),full_page=True,animations='disabled')
                     page.locator('#menu-button').click();expect(page.locator('#sidebar')).to_have_class('sidebar open')
                     nav('settings');expect(page.locator('#settings-form')).to_be_visible()
+                    page.locator('.generation-settings summary').click()
+                    expect(page.locator('[name=max_output_tokens]')).to_have_value('4096')
+                    expect(page.locator('[name=deepseek_mode]')).to_have_value('default')
                     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'Settings overflows'
+                    assert server.truncated_probes >= 2, 'Outline and tutor must recover from truncated model responses'
                     browser.close()
                     if errors:raise AssertionError('Browser errors: '+str(errors))
-                    print('Browser integration PASS: readable text, persistent large text at 360/390/768/1024/1440px, setup guidance, password reveal, drag-drop upload, upload next step, bulk material selection, retained drafts, nonintrusive cat, all learning workflows; no JavaScript errors.')
+                    print('Browser integration PASS: output settings saved, outline/tutor recover from truncation, readable text, persistent large text at 360/390/768/1024/1440px, setup guidance, password reveal, drag-drop upload, upload next step, bulk material selection, retained drafts, nonintrusive cat, all learning workflows; no JavaScript errors.')
             finally:
                 process.terminate()
                 try:process.wait(timeout=10)
