@@ -69,6 +69,10 @@ class WorkbenchTests(unittest.TestCase):
         return {"choices":[{"finish_reason":finish,"message":{"content":content,
                 "reasoning_content":"private reasoning"}}]}
 
+    def outline_response(self, sources):
+        return {'summary':'酶活性学习','items':[{'term':'控制变量','explanation':'保持其他条件一致',
+                'importance':'核心','recall_question':'为什么设置对照？','sources':sources}], 'connections':[]}
+
     def create_quiz(self):
         self.response = {"questions":[self.question(),self.question()]}
         result = self.client.post("/api/study/quiz",json=self.request({"count":2}))
@@ -317,6 +321,100 @@ class WorkbenchTests(unittest.TestCase):
         self.response={'answer':'错误引用','follow_up':'','sources':[{'material_id':self.material,'unit':'第 99 页'}]}
         response=self.client.post('/api/study/chat',json=self.request({'message':'解释酶活性'}))
         self.assertEqual(response.status_code,502)
+        self.assertEqual(len(self.captured),2)
+        self.assertEqual(self.client.get('/api/artifacts?course=biochemistry').json(),[])
+
+    def test_short_citations_resolve_to_selected_pdf_pages(self):
+        document = fitz.open()
+        for text in ['Signal transduction: receptors.','Signal transduction: second messengers.']:
+            document.new_page().insert_text((72,72),text)
+        uploaded = self.upload('信号转导.pdf',document.tobytes()).json()['id']
+        self.response = self.outline_response([{'source_id':' S1 '}])
+        self.response['connections'] = [{'chain':'受体 → 信号','explanation':'材料中的信号通路','sources':[{'source_id':'S2'}]}]
+        result = self.client.post('/api/study/outline',json=self.request({'material_ids':[uploaded]}))
+        self.assertEqual(result.status_code,200,result.text)
+        data = result.json()['data']
+        for source, page in [(data['items'][0]['sources'][0],1),(data['connections'][0]['sources'][0],2)]:
+            self.assertEqual(source,{'material_id':uploaded,'unit':f'第 {page} 页','title':'信号转导.pdf'})
+        self.assertNotIn('source_id',json.dumps(data))
+        prompt = self.captured[0][2]['messages'][1]['content']
+        self.assertNotIn(self.material,prompt)
+        self.assertIn('[来源 S1]\n[材料 '+uploaded,prompt)
+        self.assertIn('"enum": ["S1", "S2"]',prompt)
+        self.assertIn('"required": ["source_id"]',prompt)
+
+    def test_unknown_short_citation_is_regenerated_with_valid_sources(self):
+        wrong = self.outline_response([{'source_id':'S999'}])
+        wrong['summary'] = 'invalid-answer-not-to-be-echoed'
+        correct = self.outline_response([{'source_id':'S1'}])
+        self.completion_queue = [self.completion(json.dumps(wrong)),self.completion(json.dumps(correct))]
+        result = self.client.post('/api/study/outline',json=self.request())
+        self.assertEqual(result.status_code,200,result.text)
+        self.assertEqual(result.json()['data']['items'][0]['sources'][0]['material_id'],self.material)
+        self.assertEqual(len(self.captured),2)
+        repair = self.captured[-1][2]['messages'][1]['content']
+        self.assertIn('来源校正重试',repair)
+        self.assertNotIn('invalid-answer-not-to-be-echoed',repair)
+        with db.connect() as con:
+            self.assertEqual(con.execute('SELECT COUNT(*) FROM artifacts').fetchone()[0],1)
+
+    def test_unknown_or_mixed_short_citations_are_never_saved(self):
+        for source in [{'source_id':'S999'}, {'source_id':None},
+                       {'source_id':'S1','material_id':'unselected','unit':'第 99 页'}]:
+            with self.subTest(source=source):
+                self.captured.clear()
+                self.response = self.outline_response([source])
+                result = self.client.post('/api/study/outline',json=self.request())
+                self.assertEqual(result.status_code,502)
+                self.assertIn('来源',result.json()['detail'])
+                self.assertEqual(len(self.captured),2)
+        self.assertEqual(self.client.get('/api/artifacts?course=biochemistry').json(),[])
+
+    def test_sources_in_unselected_material_are_rejected(self):
+        other = self.upload('其他材料.txt','其他章节'.encode()).json()['id']
+        self.response = self.outline_response([{'material_id':other,'unit':'段落 1'}])
+        result = self.client.post('/api/study/outline',json=self.request())
+        self.assertEqual(result.status_code,502)
+        self.assertEqual(len(self.captured),2)
+        self.assertNotIn(other,self.captured[0][2]['messages'][1]['content'])
+        self.assertEqual(self.client.get('/api/artifacts?course=biochemistry').json(),[])
+
+    def test_unretrieved_pdf_page_is_rejected_even_in_selected_file(self):
+        document = fitz.open()
+        for index in range(40):
+            document.new_page().insert_text((72,72),f'Lecture page {index+1}: signal transduction.')
+        uploaded = self.upload('long.pdf',document.tobytes()).json()['id']
+        self.response = self.outline_response([{'material_id':uploaded,'unit':'第 40 页'}])
+        result = self.client.post('/api/study/outline',json=self.request({'material_ids':[uploaded]}))
+        self.assertEqual(result.status_code,502)
+        self.assertEqual(len(self.captured),2)
+        self.assertNotIn('第 40 页',self.captured[0][2]['messages'][1]['content'])
+        self.assertEqual(self.client.get('/api/artifacts?course=biochemistry').json(),[])
+
+    def test_repeated_chunks_of_same_page_share_citation_code(self):
+        chunks = [{'unit':'第 1 页','text':'受体与配体'}, {'unit':'第 1 页','text':'受体的下游效应'},
+                  {'unit':'第 2 页','text':'第二信使'}]
+        with db.connect() as con:
+            con.execute('UPDATE materials SET chunks=? WHERE id=?',(json.dumps(chunks),self.material))
+        self.response = self.outline_response([{'source_id':'S2'}])
+        result = self.client.post('/api/study/outline',json=self.request())
+        self.assertEqual(result.status_code,200,result.text)
+        self.assertEqual(result.json()['data']['items'][0]['sources'][0]['unit'],'第 2 页')
+        prompt = self.captured[0][2]['messages'][1]['content']
+        self.assertEqual(prompt.count('[来源 S1]'),2)
+        self.assertIn('"enum": ["S1", "S2"]',prompt)
+
+    def test_citation_repair_and_length_share_single_retry(self):
+        bad = json.dumps(self.outline_response([{'source_id':'S999'}]))
+        for completions in [[self.completion(None,'length'),self.completion(bad)],
+                            [self.completion(bad),self.completion(None,'length')]]:
+            with self.subTest(completions=completions):
+                self.captured.clear()
+                self.completion_queue = completions
+                result = self.client.post('/api/study/outline',json=self.request())
+                self.assertEqual(result.status_code,502)
+                self.assertEqual(len(self.captured),2)
+                self.assertEqual(self.completion_queue,[])
         self.assertEqual(self.client.get('/api/artifacts?course=biochemistry').json(),[])
 
     def test_malformed_model_output_is_rejected(self):

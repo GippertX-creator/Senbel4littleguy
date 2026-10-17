@@ -40,6 +40,12 @@ class ModelStub(BaseHTTPRequestHandler):
             return
         match = re.search(r'\[材料 ([0-9a-f]{32}) \| [^\n]+? \| ([^\]]+)\]', prompt)
         refs = [{'material_id':match[1], 'unit':match[2]}] if match else []
+        source = re.search(r'^\[来源 (S\d+)\]$',prompt,re.M)
+        if source:
+            refs = [{'source_id':source[1]}]
+        if payload['model'] == 'truncation-test-model' and '"title": "Feedback"' in prompt and '来源校正重试' not in prompt:
+            self.server.citation_probes += 1
+            refs = [{'source_id':'S999'}]
         question = {'stem':'研究温度作用时，其他条件应该如何处理？','options':['保持一致','同时改变','任意改变','不设置对照'],'answer':0,'explanation':'保持其他条件一致，可以比较温度的影响。','topic':'对照设计','sources':refs}
         if '"title": "Outline"' in prompt:
             result = {'summary':'酶活性与实验对照的学习清单。','items':[
@@ -90,6 +96,7 @@ def main():
     args = parser.parse_args()
     server = ThreadingHTTPServer(('127.0.0.1',0),ModelStub)
     server.truncated_probes = 0
+    server.citation_probes = 0
     threading.Thread(target=server.serve_forever,daemon=True).start()
     errors = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -267,6 +274,7 @@ def main():
                     expect(page.locator('[name=deepseek_mode]')).to_have_value('default')
                     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'Settings overflows'
                     assert server.truncated_probes >= 2, 'Outline and tutor must recover from truncated model responses'
+                    assert server.citation_probes == 1, 'Invalid short citation must be repaired once'
                     browser.close()
                     if errors:raise AssertionError('Browser errors: '+str(errors))
                     print('Browser integration PASS: output settings saved, outline/tutor recover from truncation, readable text, persistent large text at 360/390/768/1024/1440px, setup guidance, password reveal, drag-drop upload, upload next step, bulk material selection, retained drafts, nonintrusive cat, all learning workflows; no JavaScript errors.')

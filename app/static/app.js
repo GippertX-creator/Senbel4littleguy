@@ -705,7 +705,7 @@ function reviewPage() {
 }
 function settingsPage() {
   const s = state.settings;
-  const generationSettings = `<details class="generation-settings"><summary>生成设置（出现截断时查看）</summary><label class="field"><span>首次输出额度（token）</span><input type="number" name="max_output_tokens" min="512" max="65536" step="1" required value="${h(s.max_output_tokens ?? 8192)}"><small>默认 8192。额度包含部分模型的思考消耗；请按服务商说明填写。</small></label><label class="field"><span>DeepSeek 生成方式</span><select name="deepseek_mode">${[["fast", "快速生成（推荐）"], ["thinking", "深度思考"], ["default", "沿用模型默认模式"]].map(([value, label]) => `<option value="${value}" ${(s.deepseek_mode || "fast") === value ? "selected" : ""}>${label}</option>`).join("")}</select><small>仅对 api.deepseek.com 生效。快速生成会请求关闭深度思考；旧模型不接受该参数时可选择沿用默认模式。</small></label><p class="small-copy">生成被截断时最多自动重试一次，额度最高翻倍（不超过 65536 token），可能增加费用。请确保重试额度也在模型支持范围内。截断内容不会保存。</p></details>`;
+  const generationSettings = `<details class="generation-settings"><summary>生成设置（出现截断时查看）</summary><label class="field"><span>首次输出额度（token）</span><input type="number" name="max_output_tokens" min="512" max="65536" step="1" required value="${h(s.max_output_tokens ?? 8192)}"><small>默认 8192。额度包含部分模型的思考消耗；请按服务商说明填写。</small></label><label class="field"><span>DeepSeek 生成方式</span><select name="deepseek_mode">${[["fast", "快速生成（推荐）"], ["thinking", "深度思考"], ["default", "沿用模型默认模式"]].map(([value, label]) => `<option value="${value}" ${(s.deepseek_mode || "fast") === value ? "selected" : ""}>${label}</option>`).join("")}</select><small>仅对 api.deepseek.com 生效。快速生成会请求关闭深度思考；旧模型不接受该参数时可选择沿用默认模式。</small></label><p class="small-copy">输出被截断或引用不合法时，合计最多自动重试一次，可能增加费用。截断重试的额度最高翻倍（不超过 65536 token），请确保在模型支持范围内。不完整或引用不合法的结果不会保存。</p></details>`;
   return (
     heading(
       "连接你选择的模型。",
