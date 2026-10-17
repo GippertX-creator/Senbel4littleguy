@@ -460,4 +460,5 @@ def grade_figure(id: str, payload: models.FigureGrade):
     return {"correct": sum(r["correct"] for r in results), "total": len(results), "results": results}
 
 
+app.mount("/guide", StaticFiles(directory=db.ROOT / "docs", html=True, check_dir=False), name="guide")
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="frontend")

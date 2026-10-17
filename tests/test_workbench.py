@@ -88,6 +88,22 @@ class WorkbenchTests(unittest.TestCase):
         self.assertFalse(self.client.get("/api/settings").json()["key_present"])
         self.assertEqual(self.client.post("/api/settings/test").status_code,428)
 
+    def test_guide_documents_and_seekable_demo(self):
+        html=self.client.get('/guide/使用说明书.html')
+        self.assertEqual(html.status_code,200)
+        self.assertIn('医学生零基础使用说明书',html.text)
+        self.assertIn('script-src',html.headers['content-security-policy'])
+        self.assertNotIn('onclick=',html.text)
+        self.assertEqual(self.client.get('/guide/guide.js').status_code,200)
+        pdf=self.client.get('/guide/使用说明书.pdf')
+        self.assertEqual(pdf.status_code,200)
+        self.assertTrue(pdf.content.startswith(b'%PDF'))
+        clip=self.client.get('/guide/media/小家伙的小家伙-操作演示.mp4',headers={'Range':'bytes=0-31'})
+        self.assertEqual(clip.status_code,206)
+        self.assertEqual(len(clip.content),32)
+        self.assertIn('video/mp4',clip.headers['content-type'])
+        self.assertTrue(clip.headers['content-range'].startswith('bytes 0-31/'))
+
     def test_api_request_contract_and_test_connection(self):
         self.response = "OK"
         self.assertEqual(self.client.post("/api/settings/test").status_code,200)

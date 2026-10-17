@@ -2,6 +2,15 @@
 
 面向**生理学、病理学、细胞生物学、生物化学**的个人学习工具。Python 本地服务 + 浏览器界面，无需 Node.js、数据库服务器或 Docker。手动连接 OpenAI 兼容 API；数据保存在本机。
 
+## 第一次使用，从这里开始
+
+- [医学生零基础图文说明书](docs/使用说明书.md)：从下载 ZIP、解压、安装 Python，到填写 API、使用各功能、备份和排错。
+- [PDF 打印版](docs/使用说明书.pdf) · [Word 可编辑版](docs/使用说明书.docx) · [浏览器图文版](docs/使用说明书.html)。启动工作台后，也可点击左下角“第一次使用？看图文说明与演示”。
+- [中文步骤操作演示（MP4）](docs/media/小家伙的小家伙-操作演示.mp4) · [视频字幕](docs/media/演示字幕.srt) · [演示章节](docs/media/演示章节.json)。视频无配音，带中文提示和鼠标高亮。
+- [配套练习材料](docs/examples/)：包含课程 PPTX、实验 DOCX、Word 模板和无标签的细胞示意图。
+
+演示录制真实网页操作，但 API 使用固定的本机模拟示例，不是实际模型效果测试；片中的地址、模型名和密钥不能照抄。Windows 安装过程未在本片中录制，请按说明书操作。
+
 ## 小猫学习伙伴
 
 工作台以奶油色、淡紫色和蜜桃色呈现，小猫抱着课本陪你学习：首页、助教头像和右下角使用同一个猫咪形象。待机时轻轻呼吸，处理请求时摇头思考并显示提示，完成时跳跃庆祝，遇到错误时提醒检查；点击小猫可以摸摸它，打开学习提示或进入课程助教。
@@ -86,6 +95,8 @@ Windows PowerShell 中对应命令为：
 ```
 
 可选浏览器集成测试（开发人员）：在测试用 Python 环境安装 `playwright` 与 Chromium 后运行 `python scripts/browser_smoke.py`。也可用 `--browser-path` 指定已有浏览器。测试启动隔离的临时数据目录和本机模型模拟服务，不使用真实密钥；模拟的医学内容仅用于检查软件流程。
+
+重录演示与重建说明书（仅开发人员）：准备 Playwright/Chromium、Playwright 视频编码器、系统 ffmpeg 和 matplotlib，运行 `python scripts/record_demo.py`，随后运行 `python scripts/build_manual.py`。录制在隔离临时数据目录中完成，不读取个人学习数据，不调用真实模型。普通用户只需打开已生成的视频与 PDF，不需要安装这些录制工具。
 
 后端 `app/main.py`，材料解析 `app/extract.py`，API 与检索 `app/ai.py`，报告导出 `app/reporting.py`，浏览器界面 `app/static/`。
 
