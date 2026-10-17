@@ -275,6 +275,14 @@ def main():
                     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'Settings overflows'
                     assert server.truncated_probes >= 2, 'Outline and tutor must recover from truncated model responses'
                     assert server.citation_probes == 1, 'Invalid short citation must be repaired once'
+                    pet_profile = page.evaluate("JSON.parse(localStorage.getItem('medstudy-kitten-companion-v1'))")
+                    assert pet_profile['studies'] >= 3, 'Successful learning operations should unlock the starry CG'
+                    assert 'browser-test-only' not in json.dumps(pet_profile), 'Companion profile must never contain API keys'
+                    page.locator('.pet-quick-gallery').click()
+                    expect(page.locator('#pet-gallery [data-scene=stars]')).to_be_enabled()
+                    page.locator('#pet-gallery [data-scene=stars]').click()
+                    expect(page.locator('#pet-cg-image')).to_have_attribute('src','/assets/cg-stars.png')
+                    page.keyboard.press('Escape')
                     browser.close()
                     if errors:raise AssertionError('Browser errors: '+str(errors))
                     print('Browser integration PASS: output settings saved, outline/tutor recover from truncation, readable text, persistent large text at 360/390/768/1024/1440px, setup guidance, password reveal, drag-drop upload, upload next step, bulk material selection, retained drafts, nonintrusive cat, all learning workflows; no JavaScript errors.')

@@ -30,14 +30,17 @@
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 python scripts/browser_smoke.py --screenshot /tmp/medstudy.png
+python scripts/companion_smoke.py --screenshot /tmp/kitten-gallery.png
 ```
 
 浏览器测试需要在测试用 Python 环境安装 Playwright 和 Chromium；可使用 `--browser-path /path/to/chromium`。生产使用不需要 Playwright 或 Node.js。
 
 打包：`python scripts/package.py`。生成 `dist/小家伙的小家伙-Windows.zip`，仅包含代码、猫咪资源、部署脚本和文档，排除原始材料、数据库、密钥和虚拟环境。
 
-最新版说明书已加入生成额度、DeepSeek 模式和截断处理说明：PDF 25 页，Word/HTML/Markdown 同步更新。MP4 保持 208 秒（H.264、15 个章节），含大字模式演示。
+最新版说明书已加入生成额度、DeepSeek 模式、截断处理和猫咪互动说明：PDF 27 页，Word/HTML/Markdown 同步更新。原有 MP4 保持 208 秒（H.264、15 个章节），含大字模式演示；新增 CG 与互动见说明书第 3a 节。
 
 实际生成修复的浏览器检查通过：在真实网页中保存并重新读取生成设置，模拟知识清单和助教答疑首次截断并自动重试成功，验证移动端展开设置没有横向溢出；其余学习流程通过，无 JavaScript 错误。
 
 2026-10-17 引用兼容性修复：模型侧改用短来源标识和本次允许标识枚举，程序还原为既有 material_id / unit 结构；同页多片段复用标识。引用失败会重新生成，与截断共用一次重试预算，每次操作最多两个模型请求。40 / 40 自动化测试通过，覆盖 PDF 页码映射、非法标识与混用字段、未选材料、选中文件中未发送的页、修复成功及重试总次数；未放宽来源合法性检查。验证使用隔离测试材料和模拟 API，未验证用户课件或真实模型效果。
+
+2026-10-17 猫咪互动与 CG 更新：制作 3 张原创 CG 和 2×2 步行动画帧图；实现喂点心、毛球互动、撒娇、好感度、本地选项剧情、CG 解锁与回看、底部散步及收起/叫回。独立浏览器检查通过桌面和 390px 手机画面、键盘关闭与焦点返回、移动边界、输入时停止、暂停/减少动态效果、刷新持久化、损坏记录及存储写入失败回退。确认纯猫咪互动没有 POST 请求；原有学习全流程检查通过，成功学习可解锁星夜 CG，猫咪存储不含测试密钥。40 项后端测试通过，无未处理 JavaScript 错误。新增 3 张网页截图和说明书第 3a 节；无真实 Windows 实机验证。猫咪好感保存于浏览器站点数据，不属于 data 资料备份。

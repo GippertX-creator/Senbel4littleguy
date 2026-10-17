@@ -344,6 +344,7 @@ function updateCatVisuals() {
     state.catMotion ? "暂停猫咪动画" : "开启猫咪动画",
   );
   if (state.catMood !== "thinking") $("#tutor-thinking")?.remove();
+  window.KittenPet?.sync({ mood: state.catMood, busy: state.busy, expanded: state.catExpanded, motion: state.catMotion });
 }
 function setCatState(mood, message, expand = false) {
   clearTimeout(catTimer);
@@ -410,6 +411,7 @@ function toast(message, error = false) {
 }
 async function task(button, fn) {
   if (state.busy) return;
+  const learningAction = button?.closest("#outline-form, #chat-form, #teach-form, #report-form, #quiz-form, #compare-form, #grade-form, #review-form, #figure-grade-form");
   state.busy = true;
   setCatState("thinking", "稍等喵，我正在认真帮你处理～");
   if (state.view === "chat" && button?.closest("#chat-form")) {
@@ -445,6 +447,7 @@ async function task(button, fn) {
     state.busy = false;
     if (succeeded)
       setCatState("success", "这一步完成啦！接下来慢慢核对内容喵～");
+    if (succeeded && learningAction) window.KittenPet?.rewardStudy();
     $("#course-select").disabled = false;
     if (button?.isConnected) {
       button.disabled = false;
@@ -1025,6 +1028,7 @@ document.addEventListener("click", async (event) => {
     return;
   }
   if (action === "pet-cat") {
+    window.KittenPet?.pet();
     const messages = [
       "收到摸摸啦！我们再学一个小知识点，好不好喵？",
       "不用着急，一次弄懂一点点就很好～",

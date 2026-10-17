@@ -20,6 +20,10 @@ def main():
             raise RuntimeError("ZIP checksum validation failed")
         assert "LittleBuddy/start.bat" in archive.namelist()
         assert "LittleBuddy/app/static/assets/kitten.png" in archive.namelist()
+        for name in ["cg-sunshine.png", "cg-rain.png", "cg-stars.png", "kitten-walk.png"]:
+            assert "LittleBuddy/app/static/assets/" + name in archive.namelist()
+        for name in ["companion.js", "companion.css"]:
+            assert "LittleBuddy/app/static/" + name in archive.namelist()
         assert "LittleBuddy/docs/使用说明书.pdf" in archive.namelist()
         assert "LittleBuddy/docs/media/小家伙的小家伙-操作演示.mp4" in archive.namelist()
         assert not any("/data/" in name or "/.venv/" in name or name.endswith(".env") for name in archive.namelist())
