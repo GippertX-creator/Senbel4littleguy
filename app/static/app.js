@@ -110,7 +110,196 @@ const state = {
   catMessage: "今天也陪你一点点弄懂。",
   catExpanded: false,
   catMotion: localStorage.getItem("medstudy-cat-motion") !== "off",
+  textSize:
+    localStorage.getItem("medstudy-text-size") === "large"
+      ? "large"
+      : "standard",
+  drafts: Object.create(null),
+  uploadNotice: null,
 };
+
+const draftForms = new Set([
+  "upload-form",
+  "outline-form",
+  "teach-form",
+  "report-form",
+  "quiz-form",
+  "compare-form",
+  "chat-form",
+]);
+function captureDrafts() {
+  const content = $("#content");
+  if (!content.dataset.course) return;
+  content.querySelectorAll("form").forEach((form) => {
+    if (!draftForms.has(form.id)) return;
+    const values = Object.create(null);
+    form
+      .querySelectorAll("input[type=text], textarea, select")
+      .forEach((field) => {
+        if (field.name) values[field.name] = field.value;
+      });
+    state.drafts[`${content.dataset.course}:${form.id}`] = values;
+  });
+}
+function restoreDrafts() {
+  $("#content")
+    .querySelectorAll("form")
+    .forEach((form) => {
+      const values = state.drafts[`${state.course}:${form.id}`];
+      if (!values) return;
+      form
+        .querySelectorAll("input[type=text], textarea, select")
+        .forEach((field) => {
+          if (!Object.hasOwn(values, field.name)) return;
+          if (
+            field.tagName !== "SELECT" ||
+            [...field.options].some(
+              (option) => option.value === values[field.name],
+            )
+          )
+            field.value = values[field.name];
+        });
+    });
+}
+function updateTextSize() {
+  document.body.dataset.textSize = state.textSize;
+  const large = state.textSize === "large";
+  const button = $("#text-size-toggle");
+  button.textContent = large ? "标准字" : "大字";
+  button.setAttribute("aria-pressed", String(large));
+  button.setAttribute(
+    "aria-label",
+    large ? "切换到标准字号" : "切换到大字模式",
+  );
+}
+function modelSettingsPresent() {
+  if (state.settings.key_present) return true;
+  try {
+    return (
+      ["localhost", "127.0.0.1", "[::1]"].includes(
+        new URL(state.settings.base_url).hostname,
+      ) && Boolean(state.settings.model?.trim())
+    );
+  } catch {
+    return false;
+  }
+}
+const aiForms = {
+  outline: "outline-form",
+  teach: "teach-form",
+  report: "report-form",
+  practice: "quiz-form",
+  chat: "chat-form",
+};
+function updateReadiness() {
+  const form =
+    state.view === "practice"
+      ? $("#quiz-form, #compare-form")
+      : document.getElementById(aiForms[state.view] || "");
+  if (!form) return;
+  const noMaterials = state.materials.every((m) => m.kind === "template");
+  const noSelection = !state.selected.size;
+  const noModel = !modelSettingsPresent();
+  let helper = $(".workspace-readiness", form);
+  if (!helper) {
+    helper = document.createElement("div");
+    helper.className = "workspace-readiness";
+    helper.id = "workspace-readiness";
+    form.prepend(helper);
+  }
+  if (noMaterials)
+    helper.innerHTML =
+      '<div class="next-step"><div><strong>先上传一份课程或实验材料</strong><p>上传后会自动选中，再回来填写主题即可开始。</p></div><a class="button primary" href="#materials">去上传材料 →</a></div>';
+  else if (noSelection)
+    helper.innerHTML =
+      '<div class="next-step"><div><strong>还没有选择学习材料</strong><p>可以一键选中当前课程的材料。</p></div><button type="button" class="button primary" data-action="select-sources" data-mode="all">使用全部材料</button></div>';
+  else if (noModel)
+    helper.innerHTML =
+      '<div class="next-step"><div><strong>材料已就绪，再连接一次学习模型</strong><p>按服务商提供的信息填写地址、模型名和密钥。</p></div><a class="button primary" href="#settings">去设置 API →</a></div>';
+  else
+    helper.innerHTML =
+      '<p class="ready-line">' +
+      icon("check") +
+      "已选择 " +
+      state.selected.size +
+      " 份材料，填写下面的内容即可开始。</p>";
+  const submit = $("button[type=submit]", form);
+  if (submit) {
+    submit.disabled = noMaterials || noSelection || noModel || state.busy;
+    submit.setAttribute("aria-describedby", helper.id);
+  }
+}
+function updateSourceSelection() {
+  document.querySelectorAll(".sources-selector").forEach((selector) => {
+    $(".source-summary-text", selector).textContent =
+      `学习依据 · 已选择 ${state.selected.size} / ${state.materials.filter((m) => m.kind !== "template").length} 份材料`;
+    selector
+      .querySelectorAll("[data-source-select]")
+      .forEach(
+        (input) =>
+          (input.checked = state.selected.has(input.dataset.sourceSelect)),
+      );
+  });
+  updateReadiness();
+}
+function simplifyHelp() {
+  $("#content")
+    .querySelectorAll(".two-column > aside, .chat-layout > aside")
+    .forEach((aside) => {
+      const layout = aside.parentElement;
+      const help = document.createElement("details");
+      help.className = "page-help";
+      const summary = document.createElement("summary");
+      summary.textContent = "需要帮助？查看使用提示";
+      help.append(summary);
+      layout.append(help);
+      help.append(aside);
+      layout.classList.add("single-focus");
+    });
+}
+function uploadNextStep() {
+  const upload = state.uploadNotice;
+  if (!upload || upload.course !== state.course) return "";
+  const onlyTemplate =
+    upload.kind === "template" &&
+    !state.materials.some((m) => m.kind === "experiment");
+  return `<section class="next-step upload-success" tabindex="-1" aria-label="上传完成，选择下一步"><div><strong>已成功上传 ${upload.count} 份${kindNames[upload.kind]}</strong><p>${onlyTemplate ? "模板已保存，再上传实验内容就能准备报告。" : upload.kind === "template" ? "模板已保存，准备报告时可直接选择使用。" : "材料已自动选中，直接选择接下来要做的事。"}</p></div><div class="next-step-actions">${onlyTemplate ? '<button type="button" class="button primary" data-action="upload-experiment">上传实验材料</button>' : upload.kind === "experiment" || upload.kind === "template" ? '<a class="button primary" href="#report">准备实验报告 →</a><a class="button" href="#outline">整理知识点</a>' : '<a class="button primary" href="#outline">生成知识清单 →</a><a class="button" href="#chat">向小猫提问</a>'}</div></section>`;
+}
+function gettingStarted() {
+  const course = state.courses.find((c) => c.id === state.course);
+  return `<nav class="start-path" aria-label="开始学习的三个步骤"><strong>开始很简单</strong><button type="button" data-action="focus-course"><b>1</b><span>选课程：${h(course.name)}</span></button><a href="#materials"><b>2</b><span>${state.materials.length ? `已有 ${state.materials.length} 份材料 · 管理材料` : "上传课件或实验材料"}</span></a><a href="#outline"><b>3</b><span>整理知识，开始学习</span></a></nav>`;
+}
+function showFileSelection() {
+  const input = $("#upload-form [name=files]");
+  const display = $("#file-selection");
+  if (!input || !display) return;
+  const files = [...input.files];
+  display.textContent = files.length
+    ? `已选 ${files.length} 份：${files.map((file) => file.name).join("、")}。点击“上传并解析”完成上传。`
+    : "还未选择文件";
+}
+document.addEventListener("dragover", (event) => {
+  const zone = event.target.closest("#upload-form .dropzone");
+  if (!zone || state.busy) return;
+  event.preventDefault();
+  zone.classList.add("drag-active");
+});
+document.addEventListener("dragleave", (event) => {
+  const zone = event.target.closest("#upload-form .dropzone");
+  if (zone && !zone.contains(event.relatedTarget))
+    zone.classList.remove("drag-active");
+});
+document.addEventListener("drop", (event) => {
+  const zone = event.target.closest("#upload-form .dropzone");
+  if (!zone) return;
+  event.preventDefault();
+  zone.classList.remove("drag-active");
+  if (state.busy) return;
+  if (event.dataTransfer.files.length) {
+    $("[name=files]", zone).files = event.dataTransfer.files;
+    showFileSelection();
+  }
+});
 
 const catPrompts = {
   home: "喵～今天也陪你一点点弄懂。先选一门课程吧！",
@@ -222,7 +411,7 @@ function toast(message, error = false) {
 async function task(button, fn) {
   if (state.busy) return;
   state.busy = true;
-  setCatState("thinking", "稍等喵，我正在认真帮你处理～", true);
+  setCatState("thinking", "稍等喵，我正在认真帮你处理～");
   if (state.view === "chat" && button?.closest("#chat-form")) {
     $("#chat-thread").insertAdjacentHTML(
       "beforeend",
@@ -255,12 +444,13 @@ async function task(button, fn) {
   } finally {
     state.busy = false;
     if (succeeded)
-      setCatState("success", "这一步完成啦！接下来慢慢核对内容喵～", true);
+      setCatState("success", "这一步完成啦！接下来慢慢核对内容喵～");
     $("#course-select").disabled = false;
     if (button?.isConnected) {
       button.disabled = false;
       button.innerHTML = old;
     }
+    updateReadiness();
   }
 }
 async function loadData() {
@@ -326,7 +516,7 @@ const empty = (title, text, view = "", label = "上传课程材料") =>
   `<div class="empty">${icon("materials")}<h3>${title}</h3><p>${text}</p>${view ? `<a class="button soft" href="#${view}">${label}${icon("arrow")}</a>` : ""}</div>`;
 function sourceSelector() {
   const items = state.materials.filter((m) => m.kind !== "template");
-  return `<details class="sources-selector"><summary>学习依据 · 已选择 ${state.selected.size} / ${items.length} 份材料</summary><div class="selector-items">${items.length ? items.map((m) => `<label><input type="checkbox" data-source-select="${h(m.id)}" ${state.selected.has(m.id) ? "checked" : ""}>${h(m.title)} <span class="pill gray">${kindNames[m.kind]}</span></label>`).join("") : '<a href="#materials">先上传课程或实验材料 →</a>'}</div><div class="small-copy">仅所选材料的相关文字片段会发送给你配置的 API。</div></details>`;
+  return `<details class="sources-selector"><summary><span class="source-summary-text">学习依据 · 已选择 ${state.selected.size} / ${items.length} 份材料</span><span class="source-change-hint">点击更换</span></summary>${items.length ? `<div class="source-actions"><button class="button small" type="button" data-action="select-sources" data-mode="all">全选</button><button class="button small" type="button" data-action="select-sources" data-mode="none">清空</button>${state.view === "report" ? '<button class="button small" type="button" data-action="select-sources" data-mode="experiment">仅实验材料</button>' : ""}</div>` : ""}<div class="selector-items">${items.length ? items.map((m) => `<label><input type="checkbox" data-source-select="${h(m.id)}" ${state.selected.has(m.id) ? "checked" : ""}>${h(m.title)} <span class="pill gray">${kindNames[m.kind]}</span></label>`).join("") : '<a href="#materials">先上传课程或实验材料 →</a>'}</div><div class="small-copy">仅所选材料的相关文字片段会发送给你配置的 API。</div></details>`;
 }
 function sources(items = []) {
   return `<div class="source-list">${items.map((s) => (s.figure_id ? `<button class="source-link" data-action="figure-source" data-id="${h(s.figure_id)}" data-x="${s.x ?? ""}" data-y="${s.y ?? ""}">${h(s.title)} · 图片标注</button>` : `<button class="source-link" data-action="source" data-id="${h(s.material_id)}" data-unit="${h(s.unit)}" title="查看材料原文">${h(s.title || "课程材料")} · ${h(s.unit)}</button>`)).join("")}</div>`;
@@ -364,7 +554,7 @@ function homePage() {
       "一点点理解，有小猫陪你。这里是你的基础医学学习小天地。",
       "A LITTLE COMPANION, A LITTLE PROGRESS",
     ) +
-    `<div class="dashboard-layout"><div><section class="hero"><div><div class="eyebrow">${h(course.name)} · 学习空间</div><h2>今天也和你一起，<br>把知识一点点弄懂。</h2><p>整理讲义、准备实验、练习回忆。<br>小猫陪你，把学习变成自己的节奏。</p><a class="button" href="#materials">${state.materials.length ? "管理我的课程材料" : "上传第一份课程材料"}${icon("arrow")}</a></div>${heroCat()}</section><div class="section-heading"><h2>我的课程 <small>基础医学 · 4 门课程</small></h2><a class="text-button" href="#materials">管理材料 →</a></div><div class="course-grid">${courses}</div><div class="section-heading"><h2>从这里开始 <small>把重复工作交给工具，把思考留给自己</small></h2></div><div class="task-grid"><a class="task-card" href="#report">${icon("report")}<h3>准备实验报告</h3><p>固定内容自动整理<br>真实数据由你填写</p><span>进入实验空间 →</span></a><a class="task-card" href="#teach">${icon("teach")}<h3>讲给助教听</h3><p>试着解释一个机制<br>发现理解中的空缺</p><span>开始一次讲解 →</span></a><a class="task-card" href="#practice">${icon("practice")}<h3>检验我的理解</h3><p>课程小测与概念辨别<br>让知识经得起追问</p><span>生成章节练习 →</span></a></div><div class="workflow-line"><span>${icon("check")}材料有出处</span><span>${icon("check")}复习有节奏</span><span>${icon("check")}实验与学习相连</span></div></div><aside class="aside-stack"><section class="card"><div class="card-title"><h2>今日复习</h2><span class="pill">${h(course.name)}</span></div><div class="review-number">${state.reviews.length}<span style="font-size:12px;color:var(--muted);margin-left:8px">项待回忆</span></div><p class="small-copy">短时主动回忆，让学过的内容留下来。</p><div class="review-preview">${
+    `${gettingStarted()}<div class="dashboard-layout"><div><section class="hero"><div><div class="eyebrow">${h(course.name)} · 学习空间</div><h2>今天也和你一起，<br>把知识一点点弄懂。</h2><p>整理讲义、准备实验、练习回忆。<br>小猫陪你，把学习变成自己的节奏。</p><a class="button" href="#materials">${state.materials.length ? "管理我的课程材料" : "上传第一份课程材料"}${icon("arrow")}</a></div>${heroCat()}</section><div class="section-heading"><h2>我的课程 <small>基础医学 · 4 门课程</small></h2><a class="text-button" href="#materials">管理材料 →</a></div><div class="course-grid">${courses}</div><div class="section-heading"><h2>从这里开始 <small>把重复工作交给工具，把思考留给自己</small></h2></div><div class="task-grid"><a class="task-card" href="#outline">${icon("outline")}<h3>整理课件</h3><p>生成知识清单，串起机制。</p><span>开始整理 →</span></a><a class="task-card" href="#chat">${icon("chat")}<h3>问小猫</h3><p>带着问题，弄懂一个知识点。</p><span>开始提问 →</span></a><a class="task-card" href="#report">${icon("report")}<h3>准备实验报告</h3><p>整理固定内容，真实数据自己填。</p><span>准备报告 →</span></a><a class="task-card" href="#practice">${icon("practice")}<h3>做题与复习</h3><p>章节小测、易混辨别、错题复习。</p><span>开始练习 →</span></a></div><div class="workflow-line"><span>${icon("check")}材料有出处</span><span>${icon("check")}复习有节奏</span><span>${icon("check")}实验与学习相连</span></div></div><aside class="aside-stack"><section class="card"><div class="card-title"><h2>今日复习</h2><span class="pill">${h(course.name)}</span></div><div class="review-number">${state.reviews.length}<span style="font-size:calc(14px * var(--font-scale));color:var(--muted);margin-left:8px">项待回忆</span></div><p class="small-copy">短时主动回忆，让学过的内容留下来。</p><div class="review-preview">${
       state.reviews.length
         ? state.reviews
             .slice(0, 3)
@@ -384,7 +574,7 @@ function materialsPage() {
       "按课程收集讲义、实验内容和报告模板。后续学习都会关联这些来源。",
       "COURSE LIBRARY",
     ) +
-    `<div class="two-column"><div><form id="upload-form" class="card"><div class="card-title"><h2>上传材料</h2><span class="pill">${h(state.courses.find((c) => c.id === state.course).name)}</span></div><label class="field"><span>材料用途</span><select name="kind" class="control"><option value="course">课程材料 · PPT / 讲义</option><option value="experiment">实验材料 · 实验原理与操作内容</option><option value="template">报告模板 · 学校要求的报告格式</option></select></label><label class="dropzone">${icon("upload")}<strong>选择文件，也可以拖入下方文件选择框</strong><small>PDF / PPTX / DOCX / TXT / MD · 单文件不超过 25 MB<br>支持一次选择多份材料</small><input type="file" name="files" accept=".pdf,.pptx,.docx,.txt,.md" multiple required></label><button class="button primary" type="submit">上传并解析 ${icon("arrow")}</button>${taskError()}</form><div class="section-heading"><h2>当前课程材料 <small>${state.materials.length} 份</small></h2></div><section class="card">${state.materials.length ? state.materials.map((m) => `<div class="list-row"><span class="file-icon">${h(m.title.split(".").pop().toUpperCase())}</span><div class="list-info"><h3>${h(m.title)}</h3><p>${kindNames[m.kind]} · ${m.units} 个来源位置</p>${m.warnings.map((w) => `<p style="color:var(--orange)">${h(w)}</p>`).join("")}</div><div class="list-actions"><button class="button small" data-action="source" data-id="${m.id}">查看原文</button><button class="text-button" style="color:var(--red)" data-action="delete-material" data-id="${m.id}">删除</button></div></div>`).join("") : empty("还没有课程材料", "先上传一份 PPT 或讲义，开启这门课程的学习空间。")}</section></div><aside class="aside-stack"><section class="card"><div class="card-title"><h2>材料怎么用？</h2></div><ul class="check-list"><li>课程材料<small>用于知识清单、答疑和小测。</small></li><li>实验材料<small>用于报告固定内容和实验学习卡。</small></li><li>报告模板<small>用于报告结构与版式，不作为医学事实来源。</small></li></ul></section><section class="card note-card"><h3>给材料一个清晰的范围</h3><p>按章节上传更利于定位出处。扫描 PDF 和 PPT 内的图片不会自动识别；请先 OCR，或把图片上传到指图学习。</p></section></aside></div>`
+    `<div class="two-column"><div><form id="upload-form" class="card"><div class="card-title"><h2>上传材料</h2><span class="pill">${h(state.courses.find((c) => c.id === state.course).name)}</span></div><label class="field"><span>材料用途</span><select name="kind" class="control"><option value="course">课程材料 · PPT / 讲义</option><option value="experiment">实验材料 · 实验原理与操作内容</option><option value="template">报告模板 · 学校要求的报告格式</option></select></label><label class="dropzone">${icon("upload")}<strong>点击选择文件，或把文件拖到这里</strong><small>PDF / PPTX / DOCX / TXT / MD · 单文件不超过 25 MB<br>支持一次选择多份材料</small><input type="file" name="files" accept=".pdf,.pptx,.docx,.txt,.md" multiple required><span id="file-selection" class="file-selection" aria-live="polite">还未选择文件</span></label><button class="button primary" type="submit">上传并解析 ${icon("arrow")}</button>${taskError()}</form>${uploadNextStep()}<div class="section-heading"><h2>当前课程材料 <small>${state.materials.length} 份</small></h2></div><section class="card">${state.materials.length ? state.materials.map((m) => `<div class="list-row"><span class="file-icon">${h(m.title.split(".").pop().toUpperCase())}</span><div class="list-info"><h3>${h(m.title)}</h3><p>${kindNames[m.kind]} · ${m.units} 个来源位置</p>${m.warnings.map((w) => `<p style="color:var(--orange)">${h(w)}</p>`).join("")}</div><div class="list-actions"><button class="button small" data-action="source" data-id="${m.id}">查看原文</button><button class="text-button" style="color:var(--red)" data-action="delete-material" data-id="${m.id}">删除</button></div></div>`).join("") : empty("还没有课程材料", "先上传一份 PPT 或讲义，开启这门课程的学习空间。")}</section></div><aside class="aside-stack"><section class="card"><div class="card-title"><h2>材料怎么用？</h2></div><ul class="check-list"><li>课程材料<small>用于知识清单、答疑和小测。</small></li><li>实验材料<small>用于报告固定内容和实验学习卡。</small></li><li>报告模板<small>用于报告结构与版式，不作为医学事实来源。</small></li></ul></section><section class="card note-card"><h3>给材料一个清晰的范围</h3><p>按章节上传更利于定位出处。扫描 PDF 和 PPT 内的图片不会自动识别；请先 OCR，或把图片上传到指图学习。</p></section></aside></div>`
   );
 }
 function outlinePage() {
@@ -400,7 +590,7 @@ function outlinePage() {
 }
 function renderOutline(a) {
   const d = a.data;
-  return `<section class="result-container">${coverage(d)}<div class="result-heading"><h2>${h(a.title)}</h2><button class="button soft" data-action="recall" data-id="${a.id}">加入主动回忆 ${icon("review")}</button></div><p class="prose" style="margin-bottom:20px">${h(d.summary)}</p><div class="knowledge-grid">${d.items.map((item, i) => `<article class="card knowledge-card"><span class="pill ${item.importance === "拓展" ? "sand" : ""}">${h(item.importance)}</span><span class="muted" style="float:right;font-size:10px">${String(i + 1).padStart(2, "0")}</span><h3>${h(item.term)}</h3><p class="prose">${h(item.explanation)}</p><div class="recall-prompt">试着回忆：${h(item.recall_question)}</div>${sources(item.sources)}</article>`).join("")}</div>${d.connections.length ? `<div class="section-heading"><h2>把机制串起来</h2></div><section class="card">${d.connections.map((c) => `<div class="mechanism"><h3>${h(c.chain)}</h3><p class="prose">${h(c.explanation)}</p>${sources(c.sources)}</div>`).join("")}</section>` : ""}</section>`;
+  return `<section class="result-container">${coverage(d)}<div class="result-heading"><h2>${h(a.title)}</h2><button class="button soft" data-action="recall" data-id="${a.id}">加入主动回忆 ${icon("review")}</button></div><p class="prose" style="margin-bottom:20px">${h(d.summary)}</p><div class="knowledge-grid">${d.items.map((item, i) => `<article class="card knowledge-card"><span class="pill ${item.importance === "拓展" ? "sand" : ""}">${h(item.importance)}</span><span class="muted" style="float:right;font-size:calc(14px * var(--font-scale))">${String(i + 1).padStart(2, "0")}</span><h3>${h(item.term)}</h3><p class="prose">${h(item.explanation)}</p><div class="recall-prompt">试着回忆：${h(item.recall_question)}</div>${sources(item.sources)}</article>`).join("")}</div>${d.connections.length ? `<div class="section-heading"><h2>把机制串起来</h2></div><section class="card">${d.connections.map((c) => `<div class="mechanism"><h3>${h(c.chain)}</h3><p class="prose">${h(c.explanation)}</p>${sources(c.sources)}</div>`).join("")}</section>` : ""}</section>`;
 }
 function chatPage() {
   const thread = state.chat.length
@@ -521,7 +711,7 @@ function settingsPage() {
       "支持 OpenAI 兼容的 Chat Completions API，也可连接本机模型服务。",
       "API CONNECTION",
     ) +
-    `<div class="two-column"><form id="settings-form" class="card"><div class="card-title"><h2>手动配置 API</h2><span class="pill ${s.key_present ? "" : "sand"}">${s.key_present ? "密钥已输入" : "等待配置"}</span></div><label class="field"><span>API 基础地址</span><input type="url" name="base_url" value="${h(s.base_url)}" maxlength="500" required placeholder="https://api.openai.com/v1"><small>填写兼容地址，保留服务要求的 /v1；不包含 /chat/completions。远程地址使用 HTTPS。</small></label><label class="field"><span>模型名称</span><input type="text" name="model" value="${h(s.model)}" maxlength="150" required placeholder="填写服务商提供的模型名称"><small>模型需要支持中文指令与结构化 JSON 输出。</small></label><label class="field"><span>API 密钥</span><input type="password" name="api_key" autocomplete="off" maxlength="4000" placeholder="${s.key_present ? "已有密钥，留空可继续使用" : "填写你的 API Key"}"><small>密钥仅保存在当前服务进程内，不写入数据库或浏览器存储；关闭服务后需重新输入。本机无鉴权模型可以留空。</small></label><div class="notice">知识清单、答疑、小测与报告生成会将所选材料的相关文字片段及你的输入发送至该 API。原始文件、图片标注和学习记录保存在本机；API 费用按服务商规则计费。</div><div class="button-row"><button type="submit" class="button primary">保存连接设置</button><button type="button" class="button" data-action="test-api">测试连接</button>${s.key_present ? '<button type="button" class="text-button" data-action="clear-key">清除当前密钥</button>' : ""}</div><p class="small-copy" style="margin-top:12px">测试连接会先保存当前表单，再发起一次短请求；不会上传课程材料。</p>${taskError()}</form><aside class="aside-stack"><section class="card"><div class="card-title"><h2>常见配置</h2></div><ul class="check-list"><li>OpenAI 兼容服务<small>向服务商确认基础地址、模型名和密钥。</small></li><li>本机模型<small>例如 http://127.0.0.1:11434/v1，填写已安装模型名称。</small></li><li>连接失败<small>检查模型权限、API 额度、网络与证书，工作台会保留已上传材料。</small></li></ul></section><section class="card note-card"><h3>数据在哪里？</h3><p>项目目录的 data 文件夹保存数据库、原始材料、图片和导出报告。退出服务后可备份整个文件夹；它不会被 Git 提交。</p></section></aside></div>`
+    `<div class="two-column"><form id="settings-form" class="card"><div class="card-title"><h2>手动配置 API</h2><span class="pill ${s.key_present ? "" : "sand"}">${s.key_present ? "密钥已输入" : "等待配置"}</span></div><label class="field"><span>API 基础地址</span><input type="url" name="base_url" value="${h(s.base_url)}" maxlength="500" required placeholder="https://api.openai.com/v1"><small>填写兼容地址，保留服务要求的 /v1；不包含 /chat/completions。远程地址使用 HTTPS。</small></label><label class="field"><span>模型名称</span><input type="text" name="model" value="${h(s.model)}" maxlength="150" required placeholder="填写服务商提供的模型名称"><small>模型需要支持中文指令与结构化 JSON 输出。</small></label><label class="field"><span>API 密钥</span><span class="password-field"><input type="password" name="api_key" autocomplete="off" maxlength="4000" placeholder="${s.key_present ? "已有密钥，留空可继续使用" : "填写你的 API Key"}"><button type="button" class="button" data-action="toggle-key" aria-pressed="false" aria-label="显示或隐藏 API 密钥">显示</button></span><small>密钥仅保存在当前服务进程内，不写入数据库或浏览器存储；关闭服务后需重新输入。本机无鉴权模型可以留空。</small></label><div class="notice">知识清单、答疑、小测与报告生成会将所选材料的相关文字片段及你的输入发送至该 API。原始文件、图片标注和学习记录保存在本机；API 费用按服务商规则计费。</div><div class="button-row"><button type="button" class="button primary" data-action="test-api">保存并测试连接</button><button type="submit" class="button">仅保存设置</button>${s.key_present ? '<button type="button" class="text-button" data-action="clear-key">清除当前密钥</button>' : ""}</div><p class="small-copy" style="margin-top:12px">测试连接会先保存当前表单，再发起一次短请求；不会上传课程材料。</p>${taskError()}</form><aside class="aside-stack"><section class="card"><div class="card-title"><h2>常见配置</h2></div><ul class="check-list"><li>OpenAI 兼容服务<small>向服务商确认基础地址、模型名和密钥。</small></li><li>本机模型<small>例如 http://127.0.0.1:11434/v1，填写已安装模型名称。</small></li><li>连接失败<small>检查模型权限、API 额度、网络与证书，工作台会保留已上传材料。</small></li></ul></section><section class="card note-card"><h3>数据在哪里？</h3><p>项目目录的 data 文件夹保存数据库、原始材料、图片和导出报告。退出服务后可备份整个文件夹；它不会被 Git 提交。</p></section></aside></div>`
   );
 }
 
@@ -536,6 +726,7 @@ document.addEventListener("input", (event) => {
   }
 });
 function render() {
+  captureDrafts();
   $("#navigation").innerHTML = nav
     .map(
       ([id, name, group]) =>
@@ -559,6 +750,12 @@ function render() {
     settings: settingsPage,
   };
   $("#content").innerHTML = pages[state.view]();
+  $("#content").dataset.course = state.course;
+  $("#content").dataset.view = state.view;
+  restoreDrafts();
+  simplifyHelp();
+  updateReadiness();
+  updateTextSize();
   if (state.catMood === "idle") state.catMessage = catPrompts[state.view];
   updateCatVisuals();
 }
@@ -578,12 +775,12 @@ function syncLabels() {
 }
 
 document.addEventListener("change", (event) => {
+  if (event.target.matches("#upload-form [name=files]")) showFileSelection();
   if (event.target.matches("[data-source-select]")) {
     if (event.target.checked)
       state.selected.add(event.target.dataset.sourceSelect);
     else state.selected.delete(event.target.dataset.sourceSelect);
-    const summary = event.target.closest("details").querySelector("summary");
-    summary.textContent = `学习依据 · 已选择 ${state.selected.size} / ${state.materials.filter((m) => m.kind !== "template").length} 份材料`;
+    updateSourceSelection();
   }
   if (event.target.matches(".option input")) {
     const name = event.target.name;
@@ -624,8 +821,18 @@ document.addEventListener("submit", (event) => {
         }
       }
       await loadData();
+      state.uploadNotice = {
+        course: state.course,
+        kind: fields.get("kind"),
+        count,
+      };
       render();
       toast(`已解析 ${count} 份材料。`);
+      $(".upload-success")?.focus({ preventScroll: true });
+      $(".upload-success")?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
     } else if (form.id === "settings-form") {
       state.settings = await api("/settings", {
         method: "PUT",
@@ -646,9 +853,12 @@ document.addEventListener("submit", (event) => {
         { role: "user", content: message },
         { role: "assistant", content: result.data.answer, ...result.data },
       );
+      if ($("[name=message]", form).value === message)
+        $("[name=message]", form).value = "";
       await loadData();
       render();
       $("#chat-thread").scrollTop = $("#chat-thread").scrollHeight;
+      $("#chat-form [name=message]").focus({ preventScroll: true });
     } else if (
       [
         "outline-form",
@@ -765,6 +975,43 @@ document.addEventListener("click", async (event) => {
     return;
   }
   const action = button.dataset.action;
+  if (action === "focus-course") {
+    if (state.busy) return;
+    window.scrollTo({ top: 0, behavior: "instant" });
+    $("#course-select").focus();
+    toast("在右上角选择要学习的课程。");
+    return;
+  }
+  if (action === "toggle-key") {
+    const input = $("#settings-form [name=api_key]");
+    const reveal = input.type === "password";
+    input.type = reveal ? "text" : "password";
+    button.textContent = reveal ? "隐藏" : "显示";
+    button.setAttribute("aria-pressed", String(reveal));
+    return;
+  }
+  if (action === "select-sources") {
+    if (state.busy) return;
+    state.selected = new Set(
+      state.materials
+        .filter(
+          (m) =>
+            m.kind !== "template" &&
+            (button.dataset.mode === "all" ||
+              (button.dataset.mode === "experiment" &&
+                m.kind === "experiment")),
+        )
+        .map((m) => m.id),
+    );
+    updateSourceSelection();
+    return;
+  }
+  if (action === "upload-experiment") {
+    if (state.busy) return;
+    $("#upload-form [name=kind]").value = "experiment";
+    $("#upload-form [name=files]").click();
+    return;
+  }
   if (action === "close-cat") {
     state.catExpanded = false;
     updateCatVisuals();
@@ -945,6 +1192,11 @@ $("#course-select").addEventListener("change", (event) =>
   switchCourse(event.target.value).catch((e) => toast(e.message, true)),
 );
 $("#api-status").addEventListener("click", () => navigate("settings"));
+$("#text-size-toggle").addEventListener("click", () => {
+  state.textSize = state.textSize === "large" ? "standard" : "large";
+  localStorage.setItem("medstudy-text-size", state.textSize);
+  updateTextSize();
+});
 $("#menu-button").addEventListener("click", () =>
   $("#sidebar").classList.toggle("open"),
 );

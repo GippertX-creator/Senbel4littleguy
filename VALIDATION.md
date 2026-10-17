@@ -4,6 +4,8 @@
 
 2026-10-17 文档更新：新增 3 分 24 秒真实网页录屏（固定模拟 API、15 个中文步骤章节、无配音）、14 张界面截图、23 页 PDF 说明书、Word/HTML/Markdown 版和练习材料。录屏没有使用真实 API 密钥，未录制 Windows 安装过程。新增文档路由与视频分段请求验证，本次自动化测试 25 / 25 通过。
 
+2026-10-17 界面可读性更新：正文/输入框至少 16px，大字模式主要文字 18px；浏览器验证了正文对比度不低于 4.5:1、大字选择在刷新后保留，以及 360、390、768、1024、1440px 宽度下首页无横向溢出。新增验证覆盖拖拽上传、上传完成后的直接入口、材料批量选择、草稿保留、密钥显示/隐藏及小猫不反复弹出提示，并完成所有原有学习流程。
+
 | 检查 | 结果 | 验证内容 |
 | --- | --- | --- |
 | 全新虚拟环境安装 | 通过 | 运行 `python launch.py --install-only`，所有依赖安装成功，`pip check` 通过 |
@@ -29,3 +31,5 @@ python scripts/browser_smoke.py --screenshot /tmp/medstudy.png
 浏览器测试需要在测试用 Python 环境安装 Playwright 和 Chromium；可使用 `--browser-path /path/to/chromium`。生产使用不需要 Playwright 或 Node.js。
 
 打包：`python scripts/package.py`。生成 `dist/小家伙的小家伙-Windows.zip`，仅包含代码、猫咪资源、部署脚本和文档，排除原始材料、数据库、密钥和虚拟环境。
+
+本次配套资料已按新版界面重新生成：PDF 24 页，MP4 208 秒（H.264、15 个章节），含大字模式演示；截图与 Word/HTML/Markdown 说明书同步更新。

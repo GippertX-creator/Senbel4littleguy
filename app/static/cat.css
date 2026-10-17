@@ -26,11 +26,11 @@ body {
   filter: drop-shadow(0 3px 3px #aa8caa22);
 }
 .brand-name {
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale, 1));
   white-space: nowrap;
 }
 .brand small {
-  font-size: 8px;
+  font-size: calc(12px * var(--font-scale, 1));
   letter-spacing: 1.1px;
   margin-top: 6px;
   font-weight: 500;
@@ -82,12 +82,12 @@ body {
   min-width: 0;
 }
 .hero h2 {
-  font-size: 25px;
+  font-size: calc(25px * var(--font-scale, 1));
   line-height: 1.65;
   font-weight: 650;
 }
 .hero p {
-  font-size: 11px;
+  font-size: calc(14px * var(--font-scale, 1));
   line-height: 1.9;
   color: #9a879e;
   margin: 13px 0 20px;
@@ -147,7 +147,7 @@ body {
   border: 1px solid #ffffff;
   border-radius: 13px 13px 13px 2px;
   padding: 8px 13px;
-  font-size: 10px;
+  font-size: calc(13px * var(--font-scale, 1));
   transform: rotate(3deg);
   z-index: 2;
 }
@@ -158,7 +158,7 @@ body {
   border: 1px solid #f0e2eb;
   border-radius: 18px;
   padding: 6px 12px;
-  font-size: 9px;
+  font-size: calc(12px * var(--font-scale, 1));
   color: #9986a4;
   z-index: 2;
 }
@@ -172,18 +172,18 @@ body {
 .cat-star.one {
   left: 10px;
   top: 65px;
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale, 1));
 }
 .cat-star.two {
   right: 3px;
   top: 93px;
-  font-size: 28px;
+  font-size: calc(28px * var(--font-scale, 1));
   animation-delay: 0.8s;
 }
 .cat-star.three {
   right: 29px;
   bottom: 40px;
-  font-size: 13px;
+  font-size: calc(16px * var(--font-scale, 1));
   animation-delay: 1.7s;
 }
 .course-card {
@@ -334,7 +334,7 @@ body {
   background: #fbf7fe;
   border-radius: 12px;
   color: #a190b4;
-  font-size: 11px;
+  font-size: calc(14px * var(--font-scale, 1));
 }
 .typing-dots,
 .cat-thought {
@@ -391,7 +391,7 @@ body {
   filter: drop-shadow(0 3px 3px #9d80a522);
 }
 .companion-caption {
-  font-size: 9px;
+  font-size: calc(12px * var(--font-scale, 1));
   background: #fffdfbf0;
   border: 1px solid #eee3ee;
   border-radius: 10px;
@@ -422,17 +422,17 @@ body {
   gap: 10px;
 }
 .companion-heading strong {
-  font-size: 11px;
+  font-size: calc(14px * var(--font-scale, 1));
   color: #8f75a7;
   font-weight: 600;
 }
 .companion-heading .icon-button {
   padding: 0 3px;
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale, 1));
   color: #b7a4c0;
 }
 .companion-bubble p {
-  font-size: 11px;
+  font-size: calc(14px * var(--font-scale, 1));
   line-height: 1.9;
   color: #887292;
   margin: 7px 0 12px;
@@ -445,7 +445,7 @@ body {
 }
 .companion-actions a,
 .companion-actions button {
-  font-size: 10px;
+  font-size: calc(13px * var(--font-scale, 1));
 }
 .companion-actions button {
   border: 0;
@@ -460,7 +460,7 @@ body {
   right: 8px;
   color: #e9a5b9;
   z-index: 4;
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale, 1));
   pointer-events: none;
 }
 .cat-thought {
@@ -625,13 +625,13 @@ body[data-cat-motion="off"] .cat-love {
 }
 @media (max-width: 1150px) {
   .brand-name {
-    font-size: 14px;
+    font-size: calc(16px * var(--font-scale, 1));
   }
   .brand {
     gap: 6px;
   }
   .brand small {
-    font-size: 6px;
+    font-size: calc(6px * var(--font-scale, 1));
   }
   .hero-cat {
     width: 240px;
@@ -643,7 +643,7 @@ body[data-cat-motion="off"] .cat-love {
     padding: 24px;
   }
   .hero h2 {
-    font-size: 23px;
+    font-size: calc(23px * var(--font-scale, 1));
   }
   .hero-cat {
     width: 190px;
@@ -658,11 +658,11 @@ body[data-cat-motion="off"] .cat-love {
     height: 170px;
   }
   .cat-hello {
-    font-size: 8px;
+    font-size: calc(12px * var(--font-scale, 1));
     right: 0;
   }
   .cat-badge {
-    font-size: 8px;
+    font-size: calc(12px * var(--font-scale, 1));
   }
   .cat-companion {
     right: 16px;
@@ -673,7 +673,7 @@ body[data-cat-motion="off"] .cat-love {
     height: 73px;
   }
   .companion-caption {
-    font-size: 8px;
+    font-size: calc(12px * var(--font-scale, 1));
   }
   .companion-bubble {
     bottom: 99px;
@@ -717,16 +717,16 @@ body[data-cat-motion="off"] .cat-love {
     bottom: 3px;
   }
   .hero h2 {
-    font-size: 22px;
+    font-size: calc(22px * var(--font-scale, 1));
   }
   .hero p {
     margin: 10px 0 16px;
   }
   .page-heading h1 {
-    font-size: 25px;
+    font-size: calc(25px * var(--font-scale, 1));
   }
   .page-heading .eyebrow {
-    font-size: 8px;
+    font-size: calc(12px * var(--font-scale, 1));
     letter-spacing: 1px;
   }
   .hero-cat .cat-star.one {
