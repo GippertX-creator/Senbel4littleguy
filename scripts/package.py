@@ -26,6 +26,8 @@ def main():
             assert "LittleBuddy/app/static/" + name in archive.namelist()
         assert "LittleBuddy/docs/使用说明书.pdf" in archive.namelist()
         assert "LittleBuddy/docs/media/小家伙的小家伙-操作演示.mp4" in archive.namelist()
+        assert "LittleBuddy/docs/media/小家伙的小家伙-小猫互动演示.mp4" in archive.namelist()
+        assert "LittleBuddy/docs/小猫互动演示.html" in archive.namelist()
         assert not any("/data/" in name or "/.venv/" in name or name.endswith(".env") for name in archive.namelist())
     print(f"Package: {output} ({output.stat().st_size:,} bytes; {len(included)} files)")
 

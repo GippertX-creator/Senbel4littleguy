@@ -35,7 +35,7 @@ def table(headers,rows):return ('table',{'headers':headers,'rows':rows})
 SECTIONS=[
 section('先读这一页：你不需要会编程',
  p('这是给生理学、病理学、细胞生物学和生物化学学生准备的学习工作台。你可以把它理解为：电脑上一个能整理课件、辅助准备报告、陪你练习的小工具。日常使用不需要输入程序代码。'),
- note('本说明书对应当前仓库版本，编写日期为 2026 年 10 月 17 日。配图和视频来自真实网页操作；为避免使用真实密钥和产生模型费用，视频中的 AI 返回是固定模拟示例，不代表真实服务商的效果。Windows 安装步骤是文字指导，尚未在真实 Windows 电脑完成实机验证。'),
+ note('本说明书对应当前仓库版本，编写日期为 2026 年 10 月 18 日。配图和视频来自真实网页操作；为避免使用真实密钥和产生模型费用，视频中的 AI 返回是固定模拟示例，不代表真实服务商的效果。Windows 安装步骤是文字指导，尚未在真实 Windows 电脑完成实机验证。'),
  table(['你会拿到什么','怎样打开'],[
   ['操作演示 MP4','双击 docs/media/小家伙的小家伙-操作演示.mp4，用电脑视频播放器观看。视频有中文提示、鼠标高亮和章节，没有配音。'],
   ['本说明书 PDF','双击“使用说明书.pdf”，通常可以用 Edge、浏览器或 PDF 阅读器打开。'],
@@ -83,7 +83,7 @@ section('3a. 小猫伙伴：互动、散步与 CG 收藏',
   ['今晚也有星星','好感达到 24，或成功完成 3 次知识清单、助教提问、小测、复习等学习操作。']]),
  image('15-kitten-gallery.png','图 15：猫咪 CG 收藏与本地小剧情。图片为新制作的插画，尚未解锁的回忆会显示条件。'),
  image('16-kitten-interaction.png','图 16：小猫互动面板。选择让它散步后收起对话，或暂停动画、收起小猫。'),
- note('猫咪互动和固定文字剧情在本机运行，不调用模型、没有配音。好感不会因为离开而减少。进度保存在当前浏览器的本机网站数据中，不在 data 文件夹备份里；清除网站数据、更换浏览器或访问端口时不会自动同步。原有课程材料和学习记录仍保存在 data。现有演示视频主要介绍基础学习功能，新版互动以本节为准。')),
+ note('猫咪互动和固定文字剧情在本机运行，不调用模型、没有配音。好感不会因为离开而减少。进度保存在当前浏览器的本机网站数据中，不在 data 文件夹备份里；清除网站数据、更换浏览器或访问端口时不会自动同步。原有课程材料和学习记录仍保存在 data。学习操作视频主要介绍基础功能。另有小猫互动专门演示，可在 docs 文件夹打开“小猫互动演示.html”，或双击 media 内“小家伙的小家伙-小猫互动演示.mp4”；视频有中文画面提示、无配音，全程不调用 API。')),
 section('4. API 设置：三个框分别填什么',
  p('API 可以理解为“软件向模型提问的连接方式”。你需要向自己选用的模型服务商获取下面三项信息；不是从演示视频中照抄。'),
  table(['页面中的名称','通俗解释','你应填写什么'],[
@@ -213,8 +213,8 @@ def blocks():
 def build():
     DOCS.mkdir(exist_ok=True)
     shutil.copyfile(ROOT/'app/static/assets/kitten.png', DOCS/'images/mascot.png')
-    markdown=[f'# {TITLE}', '\n适用：Windows 本地个人使用｜更新：2026-10-17\n', '[观看演示视频](media/小家伙的小家伙-操作演示.mp4) · [练习材料](examples/)\n']
-    body=['<div class="cover"><span class="eyebrow">YOUR FIRST STUDY SESSION</span><h1>小家伙的小家伙</h1><h2>医学生零基础使用说明书</h2><p>从下载和双击启动开始，陪你完成第一次学习。</p><div class="cover-meta">Windows 本地个人版 · 2026 年 10 月 17 日<br>图文步骤 / 15 段录屏章节 / 常见问题 / 备份与更新</div><img src="images/mascot.png" alt="小猫学习伙伴"></div>']
+    markdown=[f'# {TITLE}', '\n适用：Windows 本地个人使用｜更新：2026-10-18\n', '[观看学习操作演示](media/小家伙的小家伙-操作演示.mp4) · [观看小猫互动演示](小猫互动演示.html) · [练习材料](examples/)\n']
+    body=['<div class="cover"><span class="eyebrow">YOUR FIRST STUDY SESSION</span><h1>小家伙的小家伙</h1><h2>医学生零基础使用说明书</h2><p>从下载和双击启动开始，陪你完成第一次学习。</p><div class="cover-meta">Windows 本地个人版 · 2026 年 10 月 18 日<br>图文步骤 / 15 段录屏章节 / 常见问题 / 备份与更新</div><img src="images/mascot.png" alt="小猫学习伙伴"></div>']
     body.append('<nav class="toc"><h2>按问题找章节</h2><ol>'+''.join(f'<li><a href="#section-{i}">{html.escape(s["title"])}</a></li>' for i,s in enumerate(SECTIONS))+'</ol></nav>')
     doc=Document();doc.core_properties.title=TITLE;doc.core_properties.author='小家伙的小家伙项目';section_layout=doc.sections[0]
     section_layout.top_margin=Inches(.7);section_layout.bottom_margin=Inches(.7)
@@ -224,7 +224,7 @@ def build():
     normal.paragraph_format.space_after=Pt(7)
     for style_name,size in [('Title',26),('Heading 1',18),('Heading 2',14)]:
         style=doc.styles[style_name];style.font.name='Microsoft YaHei';style.font.size=Pt(size);style.font.color.rgb=RGBColor.from_string('7562A9');style._element.rPr.rFonts.set(qn('w:eastAsia'),'微软雅黑')
-    doc.add_heading('小家伙的小家伙',0);doc.add_paragraph('医学生零基础使用说明书',style='Subtitle');doc.add_paragraph('从下载和双击启动开始，陪你完成第一次学习。\nWindows 本地个人版 · 2026-10-17')
+    doc.add_heading('小家伙的小家伙',0);doc.add_paragraph('医学生零基础使用说明书',style='Subtitle');doc.add_paragraph('从下载和双击启动开始，陪你完成第一次学习。\nWindows 本地个人版 · 2026-10-18')
     doc.add_picture(str(ROOT/'app/static/assets/kitten.png'),width=Inches(2.2));doc.add_page_break()
     doc.add_heading('按问题找章节',1)
     for s in SECTIONS:doc.add_paragraph(s['title'])
@@ -269,7 +269,7 @@ def build():
     doc.save(DOCS/'使用说明书.docx')
     (DOCS/'使用说明书.md').write_text('\n'.join(markdown),encoding='utf-8')
     css='''@page{size:A4;margin:18mm 16mm 20mm}*{box-sizing:border-box}body{font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif;color:#443a50;line-height:1.9;margin:0;background:#fff}main{max-width:920px;margin:auto;padding:30px}h1{font-size:34px;line-height:1.5}h2{color:#7562a9;font-size:21px;line-height:1.6;margin:32px 0 15px;break-after:avoid}p,li,td{font-size:13px;overflow-wrap:anywhere}p{margin:10px 0}a{color:#7562a9}aside{background:#fff5e8;border:1px solid #efddc8;border-radius:9px;padding:13px 16px;font-size:12px;line-height:1.9;margin:15px 0}table{border-collapse:collapse;width:100%;margin:16px 0;table-layout:fixed}th,td{border:1px solid #e8e0ee;padding:9px 11px;vertical-align:top}th{background:#f1eaf8;color:#7562a9;font-size:12px;text-align:left}tr{break-inside:avoid}thead{display:table-header-group}figure{margin:22px 0;break-inside:avoid}figure img{width:100%;border:1px solid #e9e1ec;border-radius:8px}figcaption{font-size:11px;color:#8b7b99;margin-top:7px}.steps{padding-left:25px}.steps li{padding-left:4px;margin-bottom:9px}.cover{position:relative;background:linear-gradient(120deg,#f5edfb,#fff1e5);border-radius:18px;padding:40px 35px 250px;min-height:600px;break-after:page}.cover h1{color:#504259;letter-spacing:-1px}.cover h2{margin-top:10px}.cover p{font-size:16px}.cover img{position:absolute;bottom:25px;right:40px;width:230px}.cover-meta{font-size:12px;color:#927e9f;line-height:2;margin-top:25px}.eyebrow{font-size:10px;letter-spacing:2px;color:#a58db6}.toc{break-after:page;background:#faf7fd;padding:20px 30px;border-radius:14px}.toc ol{padding-left:20px}.toc li{font-size:12px;line-height:1.9}.toolbar{position:sticky;top:0;padding:12px 20px;background:#fffdf7ee;border-bottom:1px solid #eee2ee;font-size:12px;z-index:3}.toolbar a{margin-right:18px}.print-button{border:0;border-radius:8px;background:#7562a9;color:#fff;padding:8px 12px;cursor:pointer}@media print{main{max-width:none;padding:0}.toolbar{display:none}body{font-size:10pt}.cover{min-height:210mm;padding-bottom:80mm}.cover img{width:65mm;bottom:15mm}.cover h1{font-size:30pt}.toc{background:#fff}section{break-before:auto}h2{font-size:15pt}p,li,td{font-size:9.5pt}th{font-size:9pt}aside{font-size:9pt}figcaption{font-size:8.5pt}figure{margin:12px 0}.steps li{margin-bottom:5px}}'''
-    html_doc='<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+TITLE+'</title><style>'+css+'</style><script src="guide.js" defer></script></head><body><div class="toolbar"><a href="media/小家伙的小家伙-操作演示.mp4">观看操作演示</a><a href="使用说明书.pdf">下载 PDF</a><a href="使用说明书.docx">下载 Word</a><a href="examples/请先阅读.txt">练习材料说明</a><button class="print-button" id="print-guide">打印 / 保存为 PDF</button></div><main>'+''.join(body)+'</main></body></html>'
+    html_doc='<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+TITLE+'</title><style>'+css+'</style><script src="guide.js" defer></script></head><body><div class="toolbar"><a href="media/小家伙的小家伙-操作演示.mp4">观看学习演示</a><a href="小猫互动演示.html">观看小猫互动演示</a><a href="使用说明书.pdf">下载 PDF</a><a href="使用说明书.docx">下载 Word</a><a href="examples/请先阅读.txt">练习材料说明</a><button class="print-button" id="print-guide">打印 / 保存为 PDF</button></div><main>'+''.join(body)+'</main></body></html>'
     (DOCS/'使用说明书.html').write_text(html_doc,encoding='utf-8')
     (DOCS/'guide.js').write_text('document.getElementById("print-guide").addEventListener("click", () => window.print());\n',encoding='utf-8')
     class QuietHandler(SimpleHTTPRequestHandler):

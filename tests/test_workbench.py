@@ -112,11 +112,23 @@ class WorkbenchTests(unittest.TestCase):
         pdf=self.client.get('/guide/使用说明书.pdf')
         self.assertEqual(pdf.status_code,200)
         self.assertTrue(pdf.content.startswith(b'%PDF'))
-        clip=self.client.get('/guide/media/小家伙的小家伙-操作演示.mp4',headers={'Range':'bytes=0-31'})
-        self.assertEqual(clip.status_code,206)
-        self.assertEqual(len(clip.content),32)
-        self.assertIn('video/mp4',clip.headers['content-type'])
-        self.assertTrue(clip.headers['content-range'].startswith('bytes 0-31/'))
+        for name in ['小家伙的小家伙-操作演示.mp4','小家伙的小家伙-小猫互动演示.mp4']:
+            clip=self.client.get('/guide/media/'+name,headers={'Range':'bytes=0-31'})
+            self.assertEqual(clip.status_code,206)
+            self.assertEqual(len(clip.content),32)
+            self.assertIn('video/mp4',clip.headers['content-type'])
+            self.assertTrue(clip.headers['content-range'].startswith('bytes 0-31/'))
+        player=self.client.get('/guide/小猫互动演示.html')
+        self.assertEqual(player.status_code,200)
+        self.assertIn('<video',player.text)
+        self.assertNotIn('onclick=',player.text)
+        self.assertEqual(self.client.get('/guide/kitten-demo.js').status_code,200)
+        chapters=self.client.get('/guide/media/小猫互动演示章节.json').json()
+        self.assertFalse(chapters['uses_model_api'])
+        self.assertEqual(len(chapters['chapters']),10)
+        starts=[chapter['start'] for chapter in chapters['chapters']]
+        self.assertEqual(starts,sorted(starts))
+        self.assertLess(starts[-1],chapters['duration'])
 
     def test_api_request_contract_and_test_connection(self):
         self.response = "OK"
