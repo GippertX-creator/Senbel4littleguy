@@ -34,6 +34,7 @@ const icon = (name) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[name] || paths.outline}"/></svg>`;
 const nav = [
   ["home", "工作台概览", ""],
+  ["agent", "学习智能体", ""],
   ["materials", "课程材料", "学习空间"],
   ["outline", "知识清单", ""],
   ["chat", "课程助教", ""],
@@ -116,6 +117,10 @@ const state = {
       : "standard",
   drafts: Object.create(null),
   uploadNotice: null,
+  scopeState: { mode: "all", material_id: "", chapter_id: "", start_unit: "", end_unit: "" },
+  catalogs: {},
+  agentThread: null,
+  agentThreads: [],
 };
 
 const draftForms = new Set([
@@ -126,6 +131,7 @@ const draftForms = new Set([
   "quiz-form",
   "compare-form",
   "chat-form",
+  "agent-form",
 ]);
 function captureDrafts() {
   const content = $("#content");
@@ -190,6 +196,7 @@ const aiForms = {
   report: "report-form",
   practice: "quiz-form",
   chat: "chat-form",
+  agent: "agent-form",
 };
 function updateReadiness() {
   const form =
@@ -206,6 +213,11 @@ function updateReadiness() {
     helper.className = "workspace-readiness";
     helper.id = "workspace-readiness";
     form.prepend(helper);
+  }
+  if (state.view === "agent") {
+    helper.innerHTML = '<p class="small-copy">直接说出需求，不明确时我会先问清楚。可一次安排最多 3 个任务；规划与生成可能分别产生 API 费用。</p>';
+    $("button[type=submit]", form).disabled = state.busy;
+    return;
   }
   if (noMaterials)
     helper.innerHTML =
@@ -230,6 +242,10 @@ function updateReadiness() {
   }
 }
 function updateSourceSelection() {
+  if (state.scopeState.material_id && !state.selected.has(state.scopeState.material_id)) {
+    state.scopeState = { mode: "all", material_id: "", chapter_id: "", start_unit: "", end_unit: "" };
+    if ($(".range-selector")) $(".range-selector").outerHTML = rangeSelector();
+  }
   document.querySelectorAll(".sources-selector").forEach((selector) => {
     $(".source-summary-text", selector).textContent =
       `学习依据 · 已选择 ${state.selected.size} / ${state.materials.filter((m) => m.kind !== "template").length} 份材料`;
@@ -302,6 +318,7 @@ document.addEventListener("drop", (event) => {
 });
 
 const catPrompts = {
+  agent: "告诉我你想学什么，我会先确定任务和章节，再帮你完成喵。",
   home: "喵～今天也陪你一点点弄懂。先选一门课程吧！",
   materials: "把讲义和实验材料放进来，我会帮你找出处喵。",
   outline: "先看知识点，再把机制串起来。我们一步一步来～",
@@ -457,16 +474,18 @@ async function task(button, fn) {
   }
 }
 async function loadData() {
-  const [materials, artifacts, reviews, figures] = await Promise.all([
+  const [materials, artifacts, reviews, figures, agentThreads] = await Promise.all([
     api(`/materials?course=${state.course}`),
     api(`/artifacts?course=${state.course}`),
     api(`/reviews?course=${state.course}`),
     api(`/figures?course=${state.course}`),
+    api(`/agent/threads?course=${state.course}`),
   ]);
   state.materials = materials;
   state.artifacts = artifacts;
   state.reviews = reviews;
   state.figures = figures;
+  state.agentThreads = agentThreads;
   const existing = new Set(materials.map((m) => m.id));
   state.selected = new Set(
     [...state.selected].filter((id) => existing.has(id)),
@@ -493,6 +512,8 @@ async function switchCourse(id) {
   localStorage.setItem("medstudy-course", id);
   state.output = null;
   state.chat = [];
+  state.agentThread = null;
+  state.scopeState = { mode: "all", material_id: "", chapter_id: "", start_unit: "", end_unit: "" };
   state.figure = null;
   state.selected.clear();
   state.quizGrade = null;
@@ -510,7 +531,83 @@ function selectedIds() {
   return ids;
 }
 function payload(extra = {}) {
-  return { course: state.course, material_ids: selectedIds(), ...extra };
+  return { course: state.course, material_ids: selectedIds(), scopes: studyScopes(), ...extra };
+}
+
+function studyScopes() {
+  const s = state.scopeState;
+  if (s.mode === "all") return [];
+  if (!state.selected.has(s.material_id)) throw new Error("请选择限定范围所属的材料。");
+  if (s.mode === "chapter") {
+    if (!s.chapter_id) throw new Error("请选择要整理的章节；没有可靠目录时可改用手动位置范围。");
+    return [{ material_id: s.material_id, chapter_id: s.chapter_id }];
+  }
+  if (!s.start_unit || !s.end_unit) throw new Error("请同时选择范围的开始和结束位置。");
+  return [{ material_id: s.material_id, start_unit: s.start_unit, end_unit: s.end_unit }];
+}
+function rangeSelector() {
+  const s = state.scopeState;
+  const items = state.materials.filter(m => state.selected.has(m.id) && m.kind !== "template");
+  const catalog = state.catalogs[s.material_id];
+  const chapter = catalog?.chapters.find(c => c.id === s.chapter_id);
+  const options = (values, selected) => '<option value="">请选择位置</option>' + values.map(unit => `<option value="${h(unit)}" ${selected === unit ? "selected" : ""}>${h(unit)}</option>`).join("");
+  return `<details class="range-selector" ${s.mode !== "all" ? "open" : ""}><summary>限定章节或位置 · ${s.mode === "all" ? "未限定章节" : chapter ? h(chapter.title) : "请核对所选范围"}</summary><div class="form-grid"><label class="field"><span>范围方式</span><select class="control" id="scope-mode"><option value="all" ${s.mode === "all" ? "selected" : ""}>所选材料的相关片段</option><option value="chapter" ${s.mode === "chapter" ? "selected" : ""}>只整理指定章节</option><option value="range" ${s.mode === "range" ? "selected" : ""}>手动选择页码 / 位置</option></select></label>${s.mode !== "all" ? `<label class="field"><span>目标文件</span><select class="control" id="scope-material"><option value="">请选择材料</option>${items.map(m => `<option value="${h(m.id)}" ${s.material_id === m.id ? "selected" : ""}>${h(m.title)}</option>`).join("")}</select></label>` : ""}</div>${s.mode !== "all" && catalog ? s.mode === "chapter" ? `<label class="field"><span>目录章节</span><select class="control" id="scope-chapter"><option value="">请选择章节</option>${catalog.chapters.map(c => `<option value="${c.id}" ${c.id === s.chapter_id ? "selected" : ""}>${h(c.title)}（${h(c.start_unit)} — ${h(c.end_unit)}）</option>`).join("")}</select></label>${catalog.chapters.length ? "" : '<p class="notice">没有可靠的章节标题，请改用手动位置范围；不会自动扩大到整份文件。</p>'}` : `<div class="form-grid"><label class="field"><span>开始位置</span><select class="control" id="scope-start">${options(catalog.units,s.start_unit)}</select></label><label class="field"><span>结束位置</span><select class="control" id="scope-end">${options(catalog.units,s.end_unit)}</select></label></div>` : ""}<p class="small-copy">${s.mode === "all" ? "关键词用于寻找相关片段。若只需要某章，请在这里明确限定。" : "仅发送这个文件在所选范围内的文字。PDF 使用文件物理页，扫描页仍需先 OCR；章节识别结果请对照原文核对。"}</p></details>`;
+}
+async function setScopeMaterial(id) {
+  state.scopeState.material_id = id;
+  state.scopeState.chapter_id = state.scopeState.start_unit = state.scopeState.end_unit = "";
+  if (id && !state.catalogs[id]) state.catalogs[id] = await api(`/materials/${id}/chapters`);
+}
+async function applyAgentScope(thread) {
+  const s = thread.last_scopes?.[0];
+  if (s) {
+    state.scopeState = { mode: s.chapter_id ? "chapter" : "range", material_id: s.material_id, chapter_id: s.chapter_id || "", start_unit: s.start_unit || "", end_unit: s.end_unit || "" };
+    if (!state.catalogs[s.material_id]) state.catalogs[s.material_id] = await api(`/materials/${s.material_id}/chapters`);
+  } else state.scopeState = { mode: "all", material_id: "", chapter_id: "", start_unit: "", end_unit: "" };
+}
+document.addEventListener("change", async event => {
+  const id = event.target.id;
+  if (id === "agent-thread-select" && !state.busy) {
+    try {
+      if (event.target.value) {
+        state.agentThread = await api(`/agent/threads/${event.target.value}?course=${state.course}`);
+        const existing = new Set(state.materials.map(m => m.id));
+        state.selected = new Set(state.agentThread.selection.filter(id => existing.has(id)));
+        await applyAgentScope(state.agentThread);
+      } else state.agentThread = null;
+      state.output = null;
+      state.quizGrade = null;
+      render();
+    } catch (error) { toast(error.message,true); }
+    return;
+  }
+  if (!id.startsWith("scope-") || state.busy) return;
+  try {
+    const s = state.scopeState;
+    if (id === "scope-mode") {
+      s.mode = event.target.value;
+      if (s.mode !== "all" && !state.selected.has(s.material_id)) await setScopeMaterial([...state.selected][0] || "");
+    } else if (id === "scope-material") await setScopeMaterial(event.target.value);
+    else if (id === "scope-chapter") s.chapter_id = event.target.value;
+    else if (id === "scope-start") s.start_unit = event.target.value;
+    else if (id === "scope-end") s.end_unit = event.target.value;
+    render();
+  } catch (error) { toast(error.message,true); }
+});
+function pdfLink(a) {
+  return `<a class="button small pdf-download" href="/api/artifacts/${h(a.id)}/pdf">下载 PDF ↓</a>`;
+}
+function renderAgentResult(a) {
+  if (a.kind === "outline") return renderOutline(a);
+  if (a.kind === "report") return renderReport(a);
+  if (a.kind === "feedback") return renderFeedback(a);
+  if (["quiz","compare"].includes(a.kind)) return renderPractice(a);
+  return `<section class="result-container card">${coverage(a.data)}<div class="result-heading"><h2>${h(a.title)}</h2>${pdfLink(a)}</div><p class="prose">${h(a.data.answer)}</p>${sources(a.data.sources)}<div class="notice">继续思考：${h(a.data.follow_up)}</div></section>`;
+}
+function agentPage() {
+  const messages = state.agentThread?.messages || [];
+  return heading("把学习任务交给小家伙。", "直接说需求。先问清楚范围，再整理知识、答疑、出题或准备报告。") +
+    `<section class="card agent-workspace"><div class="agent-toolbar"><label class="field"><span>当前课程的会话</span><select class="control" id="agent-thread-select"><option value="">新会话</option>${state.agentThreads.map(t => `<option value="${h(t.id)}" ${state.agentThread?.id === t.id ? "selected" : ""}>${h(t.title)}</option>`).join("")}</select></label><button class="button" type="button" data-action="new-agent">新建会话</button></div><div class="agent-thread" id="agent-thread" aria-live="polite">${messages.length ? messages.map(m => `<article class="agent-message ${m.role}"><strong>${m.role === "user" ? "你" : "小家伙"}</strong><p class="prose">${h(m.content)}</p>${(m.results || []).map(r => r.status === "completed" ? `<div class="agent-result-card"><button type="button" class="text-button" data-action="agent-result" data-id="${h(r.artifact_id)}">查看 ${h(r.title)} →</button><a class="button small" href="/api/artifacts/${h(r.artifact_id)}/pdf">下载 PDF ↓</a></div>` : `<div class="notice error">${h(r.error)}</div>`).join("")}</article>`).join("") : '<div class="agent-welcome"><img src="/assets/kitten.png" alt="小猫学习智能体"><div><h2>想学什么，直接告诉我。</h2><p>“只整理第二章的知识清单，再出 5 道小测。”<br>“我还没想好怎么复习，先帮我确定任务。”</p></div></div>'}</div><form id="agent-form">${sourceSelector()}<label class="field"><span>告诉小家伙你的要求</span><textarea name="message" rows="3" maxlength="6000" required placeholder="例如：只用这份讲义第二章，整理机制知识清单，保留网页结果并提供 PDF。不要填写 API 密钥。"></textarea></label><div class="button-row"><button type="submit" class="button primary">交给小家伙 →</button><span class="small-copy">会话与结果保存在本机；下载 PDF 不调用模型。</span></div>${taskError()}</form></section>${state.output ? renderAgentResult(state.output) : ""}`;
 }
 function heading(title, subtitle, eyebrow = "LEARN WITH UNDERSTANDING") {
   return `<div class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p>${subtitle}</p></div><div class="date-chip">${icon("calendar")}${new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date())}</div></div>`;
@@ -519,16 +616,17 @@ const empty = (title, text, view = "", label = "上传课程材料") =>
   `<div class="empty">${icon("materials")}<h3>${title}</h3><p>${text}</p>${view ? `<a class="button soft" href="#${view}">${label}${icon("arrow")}</a>` : ""}</div>`;
 function sourceSelector() {
   const items = state.materials.filter((m) => m.kind !== "template");
-  return `<details class="sources-selector"><summary><span class="source-summary-text">学习依据 · 已选择 ${state.selected.size} / ${items.length} 份材料</span><span class="source-change-hint">点击更换</span></summary>${items.length ? `<div class="source-actions"><button class="button small" type="button" data-action="select-sources" data-mode="all">全选</button><button class="button small" type="button" data-action="select-sources" data-mode="none">清空</button>${state.view === "report" ? '<button class="button small" type="button" data-action="select-sources" data-mode="experiment">仅实验材料</button>' : ""}</div>` : ""}<div class="selector-items">${items.length ? items.map((m) => `<label><input type="checkbox" data-source-select="${h(m.id)}" ${state.selected.has(m.id) ? "checked" : ""}>${h(m.title)} <span class="pill gray">${kindNames[m.kind]}</span></label>`).join("") : '<a href="#materials">先上传课程或实验材料 →</a>'}</div><div class="small-copy">仅所选材料的相关文字片段会发送给你配置的 API。</div></details>`;
+  return `<details class="sources-selector"><summary><span class="source-summary-text">学习依据 · 已选择 ${state.selected.size} / ${items.length} 份材料</span><span class="source-change-hint">点击更换</span></summary>${items.length ? `<div class="source-actions"><button class="button small" type="button" data-action="select-sources" data-mode="all">全选</button><button class="button small" type="button" data-action="select-sources" data-mode="none">清空</button>${state.view === "report" ? '<button class="button small" type="button" data-action="select-sources" data-mode="experiment">仅实验材料</button>' : ""}</div>` : ""}<div class="selector-items">${items.length ? items.map((m) => `<label><input type="checkbox" data-source-select="${h(m.id)}" ${state.selected.has(m.id) ? "checked" : ""}>${h(m.title)} <span class="pill gray">${kindNames[m.kind]}</span></label>`).join("") : '<a href="#materials">先上传课程或实验材料 →</a>'}</div><div class="small-copy">仅所选材料的相关文字片段会发送给你配置的 API。</div></details>` + rangeSelector();
 }
 function sources(items = []) {
-  return `<div class="source-list">${items.map((s) => (s.figure_id ? `<button class="source-link" data-action="figure-source" data-id="${h(s.figure_id)}" data-x="${s.x ?? ""}" data-y="${s.y ?? ""}">${h(s.title)} · 图片标注</button>` : `<button class="source-link" data-action="source" data-id="${h(s.material_id)}" data-unit="${h(s.unit)}" title="查看材料原文">${h(s.title || "课程材料")} · ${h(s.unit)}</button>`)).join("")}</div>`;
+  return `<div class="source-list">${items.map((s) => (s.figure_id ? `<button type="button" class="source-link" data-action="figure-source" data-id="${h(s.figure_id)}" data-x="${s.x ?? ""}" data-y="${s.y ?? ""}">${h(s.title)} · 图片标注</button>` : `<button type="button" class="source-link" data-action="source" data-id="${h(s.material_id)}" data-unit="${h(s.unit)}" title="查看材料原文">${h(s.title || "课程材料")} · ${h(s.unit)}</button>`)).join("")}</div>`;
 }
 function coverage(data) {
   const e = data.evidence;
-  return e?.partial
+  const range = e?.scope_limited ? `<div class="notice scope-coverage"><strong>本次仅使用所选范围</strong>${e.ranges.map(r => `<p>${h(r.title)} · ${h(r.label)} · ${h(r.start_unit)} — ${h(r.end_unit)}</p>`).join("")}</div>` : "";
+  return range + (e?.partial
     ? `<div class="notice warn">本次使用 ${e.selected_materials} 份材料中的 ${e.used_chunks} / ${e.total_chunks} 个文字片段。输出覆盖相关片段；如需完整章节，请缩小材料范围并分批生成。</div>`
-    : "";
+    : "");
 }
 function savedHistory(kinds) {
   const items = state.artifacts.filter((a) => kinds.includes(a.kind));
@@ -557,7 +655,7 @@ function homePage() {
       "一点点理解，有小猫陪你。这里是你的基础医学学习小天地。",
       "A LITTLE COMPANION, A LITTLE PROGRESS",
     ) +
-    `${gettingStarted()}<div class="dashboard-layout"><div><section class="hero"><div><div class="eyebrow">${h(course.name)} · 学习空间</div><h2>今天也和你一起，<br>把知识一点点弄懂。</h2><p>整理讲义、准备实验、练习回忆。<br>小猫陪你，把学习变成自己的节奏。</p><a class="button" href="#materials">${state.materials.length ? "管理我的课程材料" : "上传第一份课程材料"}${icon("arrow")}</a></div>${heroCat()}</section><div class="section-heading"><h2>我的课程 <small>基础医学 · 4 门课程</small></h2><a class="text-button" href="#materials">管理材料 →</a></div><div class="course-grid">${courses}</div><div class="section-heading"><h2>从这里开始 <small>把重复工作交给工具，把思考留给自己</small></h2></div><div class="task-grid"><a class="task-card" href="#outline">${icon("outline")}<h3>整理课件</h3><p>生成知识清单，串起机制。</p><span>开始整理 →</span></a><a class="task-card" href="#chat">${icon("chat")}<h3>问小猫</h3><p>带着问题，弄懂一个知识点。</p><span>开始提问 →</span></a><a class="task-card" href="#report">${icon("report")}<h3>准备实验报告</h3><p>整理固定内容，真实数据自己填。</p><span>准备报告 →</span></a><a class="task-card" href="#practice">${icon("practice")}<h3>做题与复习</h3><p>章节小测、易混辨别、错题复习。</p><span>开始练习 →</span></a></div><div class="workflow-line"><span>${icon("check")}材料有出处</span><span>${icon("check")}复习有节奏</span><span>${icon("check")}实验与学习相连</span></div></div><aside class="aside-stack"><section class="card"><div class="card-title"><h2>今日复习</h2><span class="pill">${h(course.name)}</span></div><div class="review-number">${state.reviews.length}<span style="font-size:calc(14px * var(--font-scale));color:var(--muted);margin-left:8px">项待回忆</span></div><p class="small-copy">短时主动回忆，让学过的内容留下来。</p><div class="review-preview">${
+    `${gettingStarted()}<a class="agent-home-entry" href="#agent"><span>✦ 学习智能体</span><strong>不想来回切换功能？直接告诉小家伙你的学习要求。</strong><span>开始对话 →</span></a><div class="dashboard-layout"><div><section class="hero"><div><div class="eyebrow">${h(course.name)} · 学习空间</div><h2>今天也和你一起，<br>把知识一点点弄懂。</h2><p>整理讲义、准备实验、练习回忆。<br>小猫陪你，把学习变成自己的节奏。</p><a class="button" href="#materials">${state.materials.length ? "管理我的课程材料" : "上传第一份课程材料"}${icon("arrow")}</a></div>${heroCat()}</section><div class="section-heading"><h2>我的课程 <small>基础医学 · 4 门课程</small></h2><a class="text-button" href="#materials">管理材料 →</a></div><div class="course-grid">${courses}</div><div class="section-heading"><h2>从这里开始 <small>把重复工作交给工具，把思考留给自己</small></h2></div><div class="task-grid"><a class="task-card" href="#outline">${icon("outline")}<h3>整理课件</h3><p>生成知识清单，串起机制。</p><span>开始整理 →</span></a><a class="task-card" href="#chat">${icon("chat")}<h3>问小猫</h3><p>带着问题，弄懂一个知识点。</p><span>开始提问 →</span></a><a class="task-card" href="#report">${icon("report")}<h3>准备实验报告</h3><p>整理固定内容，真实数据自己填。</p><span>准备报告 →</span></a><a class="task-card" href="#practice">${icon("practice")}<h3>做题与复习</h3><p>章节小测、易混辨别、错题复习。</p><span>开始练习 →</span></a></div><div class="workflow-line"><span>${icon("check")}材料有出处</span><span>${icon("check")}复习有节奏</span><span>${icon("check")}实验与学习相连</span></div></div><aside class="aside-stack"><section class="card"><div class="card-title"><h2>今日复习</h2><span class="pill">${h(course.name)}</span></div><div class="review-number">${state.reviews.length}<span style="font-size:calc(14px * var(--font-scale));color:var(--muted);margin-left:8px">项待回忆</span></div><p class="small-copy">短时主动回忆，让学过的内容留下来。</p><div class="review-preview">${
       state.reviews.length
         ? state.reviews
             .slice(0, 3)
@@ -588,12 +686,12 @@ function outlinePage() {
       "KNOWLEDGE MAP",
     ) +
     savedHistory(["outline"]) +
-    `<form id="outline-form" class="card">${sourceSelector()}<div class="form-grid"><label class="field"><span>本次学习范围（选填）</span><input name="topic" type="text" maxlength="1000" placeholder="例如：心肌兴奋性、细胞损伤、糖酵解"></label><div class="small-copy" style="padding-top:28px">留空可整理所选材料。材料较长时，建议按章节或主题分批生成。</div></div><button class="button primary" type="submit">生成知识清单 ${icon("arrow")}</button>${taskError()}</form>${state.output?.kind === "outline" ? renderOutline(state.output) : ""}`
+    `<form id="outline-form" class="card">${sourceSelector()}<div class="form-grid"><label class="field"><span>本次学习主题（选填）</span><input name="topic" type="text" maxlength="1000" placeholder="例如：心肌兴奋性、细胞损伤、糖酵解"></label><div class="small-copy" style="padding-top:28px">章节边界请在上方选择；主题留空时按当前范围整理。长章节可分批处理。</div></div><label class="field"><span>补充要求（选填）</span><textarea name="instructions" rows="2" maxlength="2000" placeholder="例如：只列 5 个重点，每点解释不超过 100 字，突出机制因果链。"></textarea></label><button class="button primary" type="submit">生成知识清单 ${icon("arrow")}</button>${taskError()}</form>${state.output?.kind === "outline" ? renderOutline(state.output) : ""}`
   );
 }
 function renderOutline(a) {
   const d = a.data;
-  return `<section class="result-container">${coverage(d)}<div class="result-heading"><h2>${h(a.title)}</h2><button class="button soft" data-action="recall" data-id="${a.id}">加入主动回忆 ${icon("review")}</button></div><p class="prose" style="margin-bottom:20px">${h(d.summary)}</p><div class="knowledge-grid">${d.items.map((item, i) => `<article class="card knowledge-card"><span class="pill ${item.importance === "拓展" ? "sand" : ""}">${h(item.importance)}</span><span class="muted" style="float:right;font-size:calc(14px * var(--font-scale))">${String(i + 1).padStart(2, "0")}</span><h3>${h(item.term)}</h3><p class="prose">${h(item.explanation)}</p><div class="recall-prompt">试着回忆：${h(item.recall_question)}</div>${sources(item.sources)}</article>`).join("")}</div>${d.connections.length ? `<div class="section-heading"><h2>把机制串起来</h2></div><section class="card">${d.connections.map((c) => `<div class="mechanism"><h3>${h(c.chain)}</h3><p class="prose">${h(c.explanation)}</p>${sources(c.sources)}</div>`).join("")}</section>` : ""}</section>`;
+  return `<section class="result-container">${coverage(d)}<div class="result-heading"><h2>${h(a.title)}</h2>${pdfLink(a)}<button class="button soft" data-action="recall" data-id="${a.id}">加入主动回忆 ${icon("review")}</button></div><p class="prose" style="margin-bottom:20px">${h(d.summary)}</p><div class="knowledge-grid">${d.items.map((item, i) => `<article class="card knowledge-card"><span class="pill ${item.importance === "拓展" ? "sand" : ""}">${h(item.importance)}</span><span class="muted" style="float:right;font-size:calc(14px * var(--font-scale))">${String(i + 1).padStart(2, "0")}</span><h3>${h(item.term)}</h3><p class="prose">${h(item.explanation)}</p><div class="recall-prompt">试着回忆：${h(item.recall_question)}</div>${sources(item.sources)}</article>`).join("")}</div>${d.connections.length ? `<div class="section-heading"><h2>把机制串起来</h2></div><section class="card">${d.connections.map((c) => `<div class="mechanism"><h3>${h(c.chain)}</h3><p class="prose">${h(c.explanation)}</p>${sources(c.sources)}</div>`).join("")}</section>` : ""}</section>`;
 }
 function chatPage() {
   const thread = state.chat.length
@@ -601,7 +699,7 @@ function chatPage() {
         .map((m) =>
           m.role === "user"
             ? `<div class="message user"><div class="bubble">${h(m.content)}</div></div>`
-            : `<div class="message assistant"><span class="message-icon"><img src="/assets/kitten.png" alt="小猫助教" /></span><div class="bubble"><p class="prose">${h(m.content)}</p>${sources(m.sources)}${m.follow_up ? `<div class="follow-up">再想一步：${h(m.follow_up)}</div>` : ""}${m.evidence?.partial ? '<p class="small-copy">本次依据材料的相关片段回答。</p>' : ""}</div></div>`,
+            : `<div class="message assistant"><span class="message-icon"><img src="/assets/kitten.png" alt="小猫助教" /></span><div class="bubble"><p class="prose">${h(m.content)}</p>${m.artifact_id ? pdfLink({id:m.artifact_id}) : ""}${sources(m.sources)}${m.follow_up ? `<div class="follow-up">再想一步：${h(m.follow_up)}</div>` : ""}${m.evidence?.partial ? '<p class="small-copy">本次依据材料的相关片段回答。</p>' : ""}</div></div>`,
         )
         .join("")
     : empty("你的课程助教已就位", "先选择课程材料，再提出一个你想弄懂的问题。");
@@ -638,7 +736,7 @@ function renderFeedback(a) {
           )
           .join("")
       : '<p class="small-copy">本次未发现需要指出的内容。</p>';
-  return `<section class="result-container">${coverage(d)}<div class="feedback-grid"><section class="card"><div class="card-title"><h2>已经讲清楚</h2><span class="pill">继续保持</span></div><ul class="check-list">${d.understood.map((s) => `<li>${h(s)}</li>`).join("") || "<li>先从一个简单环节开始解释。</li>"}</ul></section><section class="card"><div class="card-title"><h2>需要修正</h2><span class="pill sand">理解校准</span></div>${blocks(d.corrections)}</section></div><section class="card" style="margin-top:15px"><div class="card-title"><h2>还可以补上的环节</h2></div>${blocks(d.missing)}<div class="notice" style="margin-top:18px;margin-bottom:0">下一步，试着回答：${h(d.next_question)}</div></section></section>`;
+  return `<section class="result-container">${coverage(d)}<div class="result-heading"><h2>讲解反馈</h2>${pdfLink(a)}</div><div class="feedback-grid"><section class="card"><div class="card-title"><h2>已经讲清楚</h2><span class="pill">继续保持</span></div><ul class="check-list">${d.understood.map((s) => `<li>${h(s)}</li>`).join("") || "<li>先从一个简单环节开始解释。</li>"}</ul></section><section class="card"><div class="card-title"><h2>需要修正</h2><span class="pill sand">理解校准</span></div>${blocks(d.corrections)}</section></div><section class="card" style="margin-top:15px"><div class="card-title"><h2>还可以补上的环节</h2></div>${blocks(d.missing)}<div class="notice" style="margin-top:18px;margin-bottom:0">下一步，试着回答：${h(d.next_question)}</div></section></section>`;
 }
 function reportPage() {
   const templates = state.materials.filter((m) => m.kind === "template");
@@ -654,7 +752,7 @@ function reportPage() {
 }
 function renderReport(a) {
   const d = a.data;
-  return `<section class="result-container">${coverage(d)}<div class="result-heading"><h2>${h(d.title)}</h2><div class="button-row" style="margin-top:0"><a class="button primary" href="/api/exports/${d.export_id}">下载 Word ↓</a><button class="button soft" data-action="artifact" data-id="${d.quiz_id}">实验学习卡 ${icon("arrow")}</button></div></div>${d.warnings.map((w) => `<div class="notice warn">${h(w)}</div>`).join("")}<section class="card">${d.sections.map((s) => `<div class="report-section"><h3>${h(s.title)}</h3><p class="prose">${h(s.content)}</p>${sources(s.sources)}</div>`).join("")}<div class="pending-section">以下内容保留为待填写：${d.pending.map((p) => h(p)).join(" / ")}。<br>请核对固定内容是否与本次实验操作及教师要求一致。</div></section></section>`;
+  return `<section class="result-container">${coverage(d)}<div class="result-heading"><h2>${h(d.title)}</h2><div class="button-row" style="margin-top:0"><a class="button primary" href="/api/exports/${d.export_id}">下载 Word ↓</a>${pdfLink(a)}<button class="button soft" data-action="artifact" data-id="${d.quiz_id}">实验学习卡 ${icon("arrow")}</button></div></div>${d.warnings.map((w) => `<div class="notice warn">${h(w)}</div>`).join("")}<section class="card">${d.sections.map((s) => `<div class="report-section"><h3>${h(s.title)}</h3><p class="prose">${h(s.content)}</p>${sources(s.sources)}</div>`).join("")}<div class="pending-section">以下内容保留为待填写：${d.pending.map((p) => h(p)).join(" / ")}。<br>请核对固定内容是否与本次实验操作及教师要求一致。</div></section></section>`;
 }
 function practicePage() {
   const compare = state.practiceTab === "compare";
@@ -676,7 +774,7 @@ function renderPractice(a) {
     a.kind === "compare"
       ? `<section class="card" style="margin-bottom:20px"><div class="result-heading"><h2>${h(d.left_name)} 与 ${h(d.right_name)}</h2></div><table class="compare-table"><thead><tr><th>比较维度</th><th>${h(d.left_name)}</th><th>${h(d.right_name)}</th></tr></thead><tbody>${d.rows.map((r) => `<tr><td>${h(r.dimension)}</td><td>${h(r.left)}</td><td>${h(r.right)}${sources(r.sources)}</td></tr>`).join("")}</tbody></table><div class="notice" style="margin-top:18px;margin-bottom:0">记忆提示：${h(d.memory_tip)}</div></section><div class="section-heading"><h2>换个情境，再辨别一次</h2></div>`
       : "";
-  return `<section class="result-container">${coverage(d)}${comparison}${result ? `<div class="score-strip"><strong>${result.correct} / ${result.total}</strong><span>正确题数 · 错题已加入今日复习<br>解析依据课程材料，请核对来源。</span></div>` : ""}<form id="grade-form" data-id="${a.id}">${qs.map((q, i) => `<article class="card quiz-card"><span class="pill gray">第 ${i + 1} 题 · ${h(q.topic)}</span><h3>${h(q.stem)}</h3>${q.options.map((o, j) => `<label class="option ${result ? (j === result.results[i].answer ? "correct" : j === result.results[i].given ? "incorrect" : "") : ""}"><input type="radio" name="q${i}" value="${j}" ${result?.results[i].given === j ? "checked" : ""} ${result ? "disabled" : ""} required><span class="option-letter">${"ABCD"[j]}</span><span>${h(o)}</span></label>`).join("")}${result ? `<div class="answer-explanation">${result.results[i].correct ? "✓ 回答正确" : "请再检查这个知识点"} · 正确答案 ${"ABCD"[result.results[i].answer]}<br>${h(result.results[i].explanation)}</div>${sources(q.sources)}` : ""}</article>`).join("")}${result ? '<a class="button soft" href="#review">去复习错题 →</a>' : '<button class="button primary" type="submit">提交并查看解析</button>'}${taskError()}</form></section>`;
+  return `<section class="result-container">${coverage(d)}<div class="result-heading"><h2>${h(a.title)}</h2>${pdfLink(a)}</div>${comparison}${result ? `<div class="score-strip"><strong>${result.correct} / ${result.total}</strong><span>正确题数 · 错题已加入今日复习<br>解析依据课程材料，请核对来源。</span></div>` : ""}<form id="grade-form" data-id="${a.id}">${qs.map((q, i) => `<article class="card quiz-card"><span class="pill gray">第 ${i + 1} 题 · ${h(q.topic)}</span><h3>${h(q.stem)}</h3>${q.options.map((o, j) => `<label class="option ${result ? (j === result.results[i].answer ? "correct" : j === result.results[i].given ? "incorrect" : "") : ""}"><input type="radio" name="q${i}" value="${j}" ${result?.results[i].given === j ? "checked" : ""} ${result ? "disabled" : ""} required><span class="option-letter">${"ABCD"[j]}</span><span>${h(o)}</span></label>`).join("")}${result ? `<div class="answer-explanation">${result.results[i].correct ? "✓ 回答正确" : "请再检查这个知识点"} · 正确答案 ${"ABCD"[result.results[i].answer]}<br>${h(result.results[i].explanation)}</div>${sources(q.sources)}` : ""}</article>`).join("")}${result ? '<a class="button soft" href="#review">去复习错题 →</a>' : '<button class="button primary" type="submit">提交并查看解析</button>'}${taskError()}</form></section>`;
 }
 function figuresPage() {
   const f = state.figure;
@@ -743,6 +841,7 @@ function render() {
     `<span class="status-dot ${state.settings.key_present ? "" : "off"}"></span> ${state.settings.key_present ? "API 已配置" : "API 设置"}`;
   const pages = {
     home: homePage,
+    agent: agentPage,
     materials: materialsPage,
     outline: outlinePage,
     chat: chatPage,
@@ -804,7 +903,19 @@ document.addEventListener("submit", (event) => {
   const fields = new FormData(form);
   const button = $("button[type=submit]", form);
   task(button, async () => {
-    if (form.id === "upload-form") {
+    if (form.id === "agent-form") {
+      const result = await post("/agent", { course: state.course, material_ids: [...state.selected], scopes: studyScopes(), reset_scope: state.scopeState.mode === "all", thread_id: state.agentThread?.id || null, message: fields.get("message") });
+      state.agentThread = result;
+      await applyAgentScope(result);
+      const latest = result.messages.at(-1)?.results?.find(r => r.status === "completed");
+      if (latest) state.output = await api(`/artifacts/${latest.artifact_id}`);
+      $("[name=message]", form).value = "";
+      state.drafts[`${state.course}:agent-form`] = { message: "" };
+      await loadData();
+      render();
+      $("#agent-thread").scrollTop = $("#agent-thread").scrollHeight;
+      if (latest) window.KittenPet?.rewardStudy();
+    } else if (form.id === "upload-form") {
       let count = 0;
       for (const file of fields.getAll("files")) {
         const data = new FormData();
@@ -855,7 +966,7 @@ document.addEventListener("submit", (event) => {
       const result = await post("/study/chat", data);
       state.chat.push(
         { role: "user", content: message },
-        { role: "assistant", content: result.data.answer, ...result.data },
+        { role: "assistant", content: result.data.answer, artifact_id: result.id, ...result.data },
       );
       if ($("[name=message]", form).value === message)
         $("[name=message]", form).value = "";
@@ -1051,6 +1162,13 @@ document.addEventListener("click", async (event) => {
     input.focus();
     return;
   }
+  if (action === "new-agent") {
+    state.agentThread = null;
+    state.output = null;
+    state.quizGrade = null;
+    render();
+    return;
+  }
   if (action === "practice-tab") {
     state.practiceTab = button.dataset.tab;
     state.output = null;
@@ -1113,8 +1231,13 @@ document.addEventListener("click", async (event) => {
       if (a.kind === "chat")
         state.chat = [
           { role: "user", content: a.data.question || a.title },
-          { role: "assistant", content: a.data.answer, ...a.data },
+          { role: "assistant", content: a.data.answer, artifact_id: a.id, ...a.data },
         ];
+      render();
+      $(".result-container")?.scrollIntoView({ behavior: "smooth" });
+    } else if (action === "agent-result") {
+      state.output = await api(`/artifacts/${button.dataset.id}`);
+      state.quizGrade = null;
       render();
       $(".result-container")?.scrollIntoView({ behavior: "smooth" });
     } else if (action === "recall") {

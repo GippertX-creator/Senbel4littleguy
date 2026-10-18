@@ -4,6 +4,8 @@ from pathlib import Path
 
 import fitz
 from docx import Document
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 from pptx import Presentation
 
 SUPPORTED = {".pdf", ".pptx", ".docx", ".txt", ".md"}
@@ -67,11 +69,16 @@ def extract(path: Path):
         warnings.append("仅提取幻灯片文字、表格与备注；图像中的文字和图示未自动解析。")
     elif ext == ".docx":
         doc = Document(path)
-        for index, paragraph in enumerate(doc.paragraphs):
-            chunks.extend(split_text(paragraph.text, f"第 {index + 1} 段"))
-        for index, table in enumerate(doc.tables):
-            text = "\n".join(" | ".join(c.text for c in row.cells) for row in table.rows)
-            chunks.extend(split_text(text, f"表 {index + 1}"))
+        paragraph_index = table_index = 0
+        # Preserve table placement so chapter boundaries cannot absorb other chapters' tables.
+        for block in doc.iter_inner_content():
+            if isinstance(block, Paragraph):
+                paragraph_index += 1
+                chunks.extend(split_text(block.text, f"第 {paragraph_index} 段"))
+            elif isinstance(block, Table):
+                table_index += 1
+                text = "\n".join(" | ".join(c.text for c in row.cells) for row in block.rows)
+                chunks.extend(split_text(text, f"表 {table_index}"))
     elif ext in {".txt", ".md"}:
         raw = path.read_bytes()
         try:

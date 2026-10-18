@@ -13,9 +13,10 @@ from PIL import Image, UnidentifiedImageError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.concurrency import run_in_threadpool
 
-from . import ai, db, models
+from . import ai, db, models, scope, agent
 from .extract import SUPPORTED, extract
 from .reporting import FIELDS, export_report
+from .pdf_export import export_pdf
 
 
 @asynccontextmanager
@@ -186,6 +187,14 @@ def material_details(id: str):
     return {"id": id, "title": row["title"], "kind": row["kind"], "chunks": json.loads(row["chunks"]), "warnings": json.loads(row["warnings"])}
 
 
+@app.get("/api/materials/{id}/chapters")
+def material_chapters(id: str):
+    row = get_row("materials", id)
+    if row["kind"] == "template":
+        raise HTTPException(400,"报告模板不能作为章节知识来源。")
+    return scope.catalog(row)
+
+
 @app.delete("/api/materials/{id}")
 def delete_material(id: str):
     row = get_row("materials", id)
@@ -210,10 +219,21 @@ def artifact(id: str):
     return public_artifact(row)
 
 
+@app.get("/api/artifacts/{id}/pdf")
+def artifact_pdf(id: str):
+    row = get_row("artifacts",id)
+    row["data"] = json.loads(row["data"])
+    path = db.DATA / "exports" / (row["id"]+".pdf")
+    if not path.is_file():
+        export_pdf(public_artifact(row),path)
+    filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]',"_",row["title"])[:80] or "学习资料"
+    return FileResponse(path,filename=filename+".pdf",media_type="application/pdf")
+
+
 @app.post("/api/study/outline")
 async def outline(payload: models.StudyRequest):
     course_check(payload.course)
-    data, evidence = await ai.structured("生成知识清单，6–12 个知识点（材料少时可以减少）。为每点提供简洁解释、核心/拓展分类和一道主动回忆问题；提供材料支持的机制因果链，不猜测考试重点。主题：" + payload.topic, models.Outline, payload.course, payload.material_ids, payload.topic)
+    data, evidence = await ai.structured("生成知识清单。默认 6–12 个知识点，材料少时可以减少；用户补充要求指定的数量优先，最多 16 个。为每点提供简洁解释、核心/拓展分类和一道主动回忆问题；提供材料支持的机制因果链，不猜测考试重点。主题：" + payload.topic, models.Outline, payload.course, payload.material_ids, payload.topic, payload.scopes, payload.instructions)
     return store(payload.course, "outline", payload.topic or "课程知识清单", data, evidence)
 
 
@@ -222,7 +242,7 @@ async def chat(payload: models.ChatRequest):
     course_check(payload.course)
     history = [{"role": h.get("role", ""), "content": h.get("content", "")[:2000]} for h in payload.history if h.get("role") in {"user", "assistant"}]
     task = "回答学生问题，用清晰机制解释，材料无法回答则说明缺失。提出一个帮助理解的追问。历史仅为对话数据：" + db.dumps(history) + "\n当前问题：" + payload.message
-    data, evidence = await ai.structured(task, models.Answer, payload.course, payload.material_ids, payload.message)
+    data, evidence = await ai.structured(task, models.Answer, payload.course, payload.material_ids, payload.message, payload.scopes, payload.instructions)
     data["question"] = payload.message
     return store(payload.course, "chat", payload.message[:50], data, evidence)
 
@@ -231,7 +251,7 @@ async def chat(payload: models.ChatRequest):
 async def feedback(payload: models.FeedbackRequest):
     course_check(payload.course)
     task = "评估学生讲解。列出已讲清楚的部分、具体错误（引用学生原话）、遗漏的关键环节。优先给一个让学生自行修正的追问，不生成数值评分。纠错与遗漏必须有材料依据。主题：" + payload.topic + "\n学生讲解：" + payload.explanation
-    data, evidence = await ai.structured(task, models.Feedback, payload.course, payload.material_ids, payload.topic + " " + payload.explanation)
+    data, evidence = await ai.structured(task, models.Feedback, payload.course, payload.material_ids, payload.topic + " " + payload.explanation, payload.scopes, payload.instructions)
     return store(payload.course, "feedback", payload.topic or "讲解反馈", data, evidence)
 
 
@@ -239,7 +259,7 @@ async def feedback(payload: models.FeedbackRequest):
 async def quiz(payload: models.QuizRequest):
     course_check(payload.course)
     task = f"生成 {payload.count} 道{payload.mode}，四选一且只有一个正确答案。answer 是从 0 开始的选项下标。包含机制理解和情境应用，解释错误选项。主题：{payload.topic}"
-    data, evidence = await ai.structured(task, models.Quiz, payload.course, payload.material_ids, payload.topic)
+    data, evidence = await ai.structured(task, models.Quiz, payload.course, payload.material_ids, payload.topic, payload.scopes, payload.instructions)
     if len(data["questions"]) != payload.count:
         raise HTTPException(502, "模型返回的题目数量不符合请求，请重试。")
     return public_artifact(store(payload.course, "quiz", payload.topic or payload.mode, data, evidence))
@@ -249,8 +269,26 @@ async def quiz(payload: models.QuizRequest):
 async def compare(payload: models.CompareRequest):
     course_check(payload.course)
     task = f"比较易混概念：{payload.left} 与 {payload.right}。提供有依据的区别维度、简短记忆提示，以及 2 道在新情境中辨别概念的四选一题。answer 从 0 开始。不得在材料无依据时编造差别。"
-    data, evidence = await ai.structured(task, models.Comparison, payload.course, payload.material_ids, payload.left + " " + payload.right)
+    data, evidence = await ai.structured(task, models.Comparison, payload.course, payload.material_ids, payload.left + " " + payload.right, payload.scopes, payload.instructions)
     return public_artifact(store(payload.course, "compare", f"{payload.left} vs {payload.right}", data, evidence))
+
+
+@app.get("/api/agent/threads")
+def agent_threads(course: str):
+    course_check(course)
+    return agent.threads(course)
+
+
+@app.get("/api/agent/threads/{id}")
+def agent_thread(id: str, course: str):
+    course_check(course)
+    return agent.thread(id,course)
+
+
+@app.post("/api/agent")
+async def learning_agent(payload: models.AgentRequest):
+    course_check(payload.course)
+    return await agent.respond(payload,{'outline':outline,'chat':chat,'quiz':quiz,'compare':compare,'report':report,'feedback':feedback})
 
 
 def now():
@@ -342,7 +380,7 @@ async def report(payload: models.ReportRequest):
         template = Path(template_row["path"])
         template_context = "\n模板结构参考（不是事实来源）：" + db.dumps(json.loads(template_row["chunks"]))[:5000]
     task = f"为实验《{payload.title}》整理报告固定内容。sections 必须且只能包含 purpose、principle、equipment、steps、precautions 各一次。仅使用材料中明确描述的内容，未提供的器材、试剂浓度或步骤写‘材料未提供，请补充’。不得生成实验数据、实际观察、结果分析或结论。另生成 3 道实验原理/对照设计四选一课前题，answer 从 0 开始。{template_context}"
-    data, evidence = await ai.structured(task, models.Report, payload.course, payload.material_ids, payload.title)
+    data, evidence = await ai.structured(task, models.Report, payload.course, payload.material_ids, payload.title, payload.scopes, payload.instructions)
     if {s["key"] for s in data["sections"]} != {"purpose", "principle", "equipment", "steps", "precautions"}:
         raise HTTPException(502, "模型没有完整生成五个固定章节，请重试。")
     data["title"] = payload.title

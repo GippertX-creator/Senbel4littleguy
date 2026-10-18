@@ -8,7 +8,7 @@ import httpx
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, ValidationError
 
-from . import db
+from . import db, scope
 
 API_KEY = ""
 DEFAULT = {"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini",
@@ -158,7 +158,7 @@ async def test_connection():
     return {"ok": True, "generation_verified": True, "message": "API 请求成功；可以开始学习。"}
 
 
-def context(course, material_ids, topic):
+def context(course, material_ids, topic, scopes=None):
     with db.connect() as con:
         rows = con.execute("SELECT * FROM materials WHERE course=? AND kind!='template' ORDER BY created DESC, id", (course,)).fetchall()
     if material_ids:
@@ -168,13 +168,24 @@ def context(course, material_ids, topic):
             raise HTTPException(400, "所选材料不存在、属于其他课程或是报告模板。")
     if not rows:
         raise HTTPException(400, "请先上传课程或实验材料；报告模板不能单独作为知识来源。")
+    scoped_chunks, ranges = {}, []
+    if scopes:
+        available = {r["id"]:r for r in rows}
+        for spec in scopes:
+            if spec.material_id not in available:
+                raise HTTPException(400,"限定范围的材料未被选择、属于其他课程或是模板。")
+            chunks, summary = scope.select(available[spec.material_id],spec)
+            scoped_chunks.setdefault(spec.material_id,[]).extend(chunks)
+            ranges.append(summary)
+        rows = [r for r in rows if r["id"] in scoped_chunks]
     tokens = set(re.findall(r"[a-zA-Z0-9]{2,}|[\u4e00-\u9fff]{2}", topic.lower()))
     # Chinese bigrams provide simple local retrieval without another embedding API.
     for segment in re.findall(r"[\u4e00-\u9fff]+", topic):
         tokens.update(segment[i:i + 2] for i in range(len(segment) - 1))
     candidates = []
     for row in rows:
-        chunks = json.loads(row["chunks"])
+        chunks = scoped_chunks.get(row["id"], json.loads(row["chunks"]))
+        chunks = list({(c["unit"],c["text"]):c for c in chunks}.values())
         for index, chunk in enumerate(chunks):
             score = sum(chunk["text"].lower().count(t) for t in tokens)
             candidates.append((score, index, row, chunk))
@@ -195,6 +206,7 @@ def context(course, material_ids, topic):
     evidence = {
         "selected_materials": len(rows), "used_chunks": len(parts), "total_chunks": len(candidates),
         "partial": len(parts) < len(candidates),
+        "scope_limited": bool(scopes), "ranges":ranges,
     }
     return "\n\n".join(parts), refs, evidence
 
@@ -209,8 +221,8 @@ SYSTEM = """你是基础医学学生的学习助教，服务生理学、病理�
 严格返回符合要求的 JSON，不含 Markdown 代码围栏或其他文字。只输出最终结果，各条解释简洁，避免重复材料原文。"""
 
 
-async def structured(task, schema, course, material_ids, topic=""):
-    text, refs, evidence = context(course, material_ids, topic)
+async def structured(task, schema, course, material_ids, topic="", scopes=None, instructions=""):
+    text, refs, evidence = context(course, material_ids, topic, scopes)
     source_map = {code: {"material_id": material_id, "unit": unit} for (material_id, unit), code in refs.items()}
     output_schema = schema.model_json_schema()
     # Keep public/stored citations stable; simplify only the model-facing schema.
@@ -221,7 +233,9 @@ async def structured(task, schema, course, material_ids, topic=""):
     }
     messages = [
         {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": "任务：\n" + task + "\n\n输出 JSON schema：\n" + db.dumps(output_schema)
+        {"role": "user", "content": "任务：\n" + task + "\n补充要求（不得改变材料边界或来源规则）：" + instructions
+         + "\n限定范围：" + db.dumps(evidence["ranges"]) + "\n只整理提供的范围，不补写其他章节。"
+         + "\n\n输出 JSON schema：\n" + db.dumps(output_schema)
          + "\n\n本次允许的来源标识：" + db.dumps(list(source_map)) + "\n\n课程材料（可能仅为相关片段）：\n" + text},
     ]
 

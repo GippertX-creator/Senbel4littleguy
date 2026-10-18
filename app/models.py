@@ -85,10 +85,19 @@ class Report(BaseModel):
     pre_questions: list[Question] = Field(min_length=2, max_length=4)
 
 
+class MaterialScope(BaseModel):
+    material_id: str = Field(min_length=1, max_length=100)
+    chapter_id: str = Field(default="", max_length=40)
+    start_unit: str = Field(default="", max_length=150)
+    end_unit: str = Field(default="", max_length=150)
+
+
 class StudyRequest(BaseModel):
     course: str
     material_ids: list[str] = Field(default_factory=list, max_length=50)
     topic: str = Field(default="", max_length=1000)
+    scopes: list[MaterialScope] = Field(default_factory=list, max_length=30)
+    instructions: str = Field(default="", max_length=2000)
 
 
 class ChatRequest(StudyRequest):
@@ -101,7 +110,7 @@ class FeedbackRequest(StudyRequest):
 
 
 class QuizRequest(StudyRequest):
-    count: int = Field(default=5, ge=2, le=10)
+    count: int = Field(default=5, ge=1, le=10)
     mode: Literal["章节小测", "易混辨别"] = "章节小测"
 
 
@@ -113,6 +122,33 @@ class CompareRequest(StudyRequest):
 class ReportRequest(StudyRequest):
     title: str = Field(min_length=1, max_length=100)
     template_id: str | None = None
+
+
+class AgentTask(BaseModel):
+    action: Literal["outline", "chat", "quiz", "compare", "report", "feedback"]
+    topic: str = Field(default="", max_length=1000)
+    material_key: str = Field(default="", max_length=20)
+    chapter_key: str = Field(default="", max_length=40)
+    scope_mode: Literal["inherit", "all"] = "inherit"
+    start_unit: str = Field(default="", max_length=150)
+    end_unit: str = Field(default="", max_length=150)
+    count: int = Field(default=5, ge=1, le=10)
+    left: str = Field(default="", max_length=80)
+    right: str = Field(default="", max_length=80)
+    explanation: str = Field(default="", max_length=6000)
+    instructions: str = Field(default="", max_length=2000)
+
+
+class AgentPlan(BaseModel):
+    status: Literal["clarify", "execute"]
+    message: str = Field(min_length=1, max_length=2000)
+    tasks: list[AgentTask] = Field(default_factory=list, max_length=3)
+
+
+class AgentRequest(StudyRequest):
+    reset_scope: bool = False
+    message: str = Field(min_length=1, max_length=6000)
+    thread_id: str | None = Field(default=None, max_length=100)
 
 
 class GradeRequest(BaseModel):

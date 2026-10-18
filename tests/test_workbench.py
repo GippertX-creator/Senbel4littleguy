@@ -539,5 +539,239 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(list((db.DATA/'uploads').iterdir()),[])
 
 
+    def chapter_document(self):
+        doc = Document()
+        for index, name in enumerate(['第一章 细胞膜','第二章 信号转导','第三章 细胞周期'],1):
+            doc.add_heading(name,1)
+            doc.add_paragraph(f'CHAPTER_{index}_ONLY 这是第 {index} 章的独立内容。')
+            doc.add_table(rows=1,cols=1).cell(0,0).text=f'TABLE_{index}_ONLY'
+        buf=io.BytesIO();doc.save(buf)
+        return self.upload('细胞生物学.docx',buf.getvalue()).json()['id']
+
+    def agent_plan(self, tasks=None, message='我会按指定章节完成任务。', status='execute'):
+        return self.completion(json.dumps({'status':status,'message':message,'tasks':tasks or []},ensure_ascii=False))
+
+    def test_docx_chapter_scope_keeps_tables_in_their_original_chapter(self):
+        material=self.chapter_document()
+        catalog=self.client.get(f'/api/materials/{material}/chapters').json()
+        self.assertEqual([c['title'] for c in catalog['chapters']],['第一章 细胞膜','第二章 信号转导','第三章 细胞周期'])
+        self.response=self.outline_response([{'source_id':'S1'}])
+        result=self.client.post('/api/study/outline',json=self.request({'material_ids':[material], 'scopes':[{'material_id':material,'chapter_id':'C2'}]}))
+        self.assertEqual(result.status_code,200,result.text)
+        prompt=self.captured[-1][2]['messages'][1]['content']
+        self.assertIn('CHAPTER_2_ONLY',prompt);self.assertIn('TABLE_2_ONLY',prompt)
+        for token in ['CHAPTER_1_ONLY','CHAPTER_3_ONLY','TABLE_1_ONLY','TABLE_3_ONLY']:
+            self.assertNotIn(token,prompt)
+        self.assertEqual(result.json()['data']['evidence']['ranges'][0]['label'],'第二章 信号转导')
+
+    def test_chapters_within_one_text_unit_are_sliced_before_generation(self):
+        material=self.upload('chapters.txt','第一章 基础\nFIRST_ONLY\n第二章 信号\nSECOND_ONLY\n第三章 周期\nTHIRD_ONLY'.encode()).json()['id']
+        self.response=self.outline_response([{'source_id':'S1'}])
+        result=self.client.post('/api/study/outline',json=self.request({'material_ids':[material],'scopes':[{'material_id':material,'chapter_id':'C2'}]}))
+        self.assertEqual(result.status_code,200,result.text)
+        prompt=self.captured[-1][2]['messages'][1]['content']
+        self.assertIn('SECOND_ONLY',prompt)
+        self.assertNotIn('FIRST_ONLY',prompt);self.assertNotIn('THIRD_ONLY',prompt)
+
+    def test_overlapping_text_chunks_do_not_leak_previous_chapter(self):
+        text='第一章 基础\n'+('甲'*1300)+'FIRST_EDGE_ONLY\n第二章 信号\n'+('乙'*1500)+'SECOND_ONLY\n第三章 周期\nTHIRD_ONLY'
+        material=self.upload('overlap.txt',text.encode()).json()['id']
+        self.response=self.outline_response([{'source_id':'S1'}])
+        result=self.client.post('/api/study/outline',json=self.request({'material_ids':[material],'scopes':[{'material_id':material,'chapter_id':'C2'}]}))
+        self.assertEqual(result.status_code,200,result.text)
+        prompt=self.captured[-1][2]['messages'][1]['content']
+        self.assertIn('SECOND_ONLY',prompt)
+        self.assertNotIn('FIRST_EDGE_ONLY',prompt);self.assertNotIn('THIRD_ONLY',prompt)
+
+    def test_pdf_toc_and_manual_page_range_are_exact(self):
+        doc=fitz.open()
+        for index in range(4):doc.new_page().insert_text((72,72),f'PAGE_{index+1}_ONLY')
+        doc.set_toc([[1,'第一章',1],[1,'第二章',3]])
+        material=self.upload('目录.pdf',doc.tobytes()).json()['id']
+        catalog=self.client.get(f'/api/materials/{material}/chapters').json()
+        self.assertEqual(catalog['chapters'][1]['start_unit'],'第 3 页')
+        self.response=self.outline_response([{'source_id':'S1'}])
+        for spec, included, excluded in [({'chapter_id':'C2'},['PAGE_3_ONLY','PAGE_4_ONLY'],['PAGE_1_ONLY','PAGE_2_ONLY']),
+                                        ({'start_unit':'第2页','end_unit':'第 3 页'},['PAGE_2_ONLY','PAGE_3_ONLY'],['PAGE_1_ONLY','PAGE_4_ONLY'])]:
+            result=self.client.post('/api/study/outline',json=self.request({'material_ids':[material],'scopes':[{'material_id':material,**spec}]}))
+            self.assertEqual(result.status_code,200,result.text)
+            prompt=self.captured[-1][2]['messages'][1]['content']
+            for text in included:self.assertIn(text,prompt)
+            for text in excluded:self.assertNotIn(text,prompt)
+
+    def test_invalid_scope_never_falls_back_to_all_materials(self):
+        material=self.chapter_document()
+        for scopes in [[{'material_id':material,'chapter_id':'C99'}], [{'material_id':self.material,'chapter_id':'C1'}],
+                       [{'material_id':material,'start_unit':'第 6 段','end_unit':'第 1 段'}],
+                       [{'material_id':material,'chapter_id':'C2','start_unit':'第 1 段'}]]:
+            self.captured.clear()
+            result=self.client.post('/api/study/outline',json=self.request({'material_ids':[material],'scopes':scopes}))
+            self.assertEqual(result.status_code,400,result.text)
+            self.assertEqual(self.captured,[])
+
+    def test_pdf_export_keeps_chinese_scope_sources_and_long_text(self):
+        material=self.chapter_document()
+        self.response=self.outline_response([{'source_id':'S1'}])
+        self.response['items'][0]['explanation']='信号转导机制。'*450+'末尾哨兵'
+        result=self.client.post('/api/study/outline',json=self.request({'material_ids':[material],'scopes':[{'material_id':material,'chapter_id':'C2'}]})).json()
+        before=len(self.captured)
+        exported=self.client.get('/api/artifacts/'+result['id']+'/pdf')
+        self.assertEqual(exported.status_code,200,exported.text[:100] if not exported.content.startswith(b'%PDF') else '')
+        with fitz.open(stream=exported.content,filetype='pdf') as pdf:
+            self.assertGreater(len(pdf),1)
+            text=''.join(p.get_text() for p in pdf)
+        for value in ['末尾哨兵','第二章 信号转导','细胞生物学.docx','主动回忆']:
+            self.assertIn(value,text)
+        self.assertNotIn('test-only-key',text)
+        self.assertEqual(self.client.get('/api/artifacts/'+result['id']+'/pdf').content,exported.content)
+        self.assertEqual(len(self.captured),before)
+
+    def test_quiz_pdf_does_not_reveal_hidden_explanations(self):
+        quiz=self.create_quiz()
+        response=self.client.get('/api/artifacts/'+quiz['id']+'/pdf')
+        self.assertEqual(response.status_code,200)
+        with fitz.open(stream=response.content,filetype='pdf') as pdf:
+            text=''.join(p.get_text() for p in pdf)
+        self.assertIn('设计温度实验',text)
+        self.assertNotIn('保持其他条件一致，才能比较温度的作用。',text)
+        self.assertIn('练习版',text)
+
+    def test_agent_clarifies_without_materials_or_reliable_chapters(self):
+        result=self.client.post('/api/agent',json={'course':'biochemistry','material_ids':[],'message':'帮我学习'}).json()
+        self.assertEqual(result['messages'][-1]['status'],'clarify')
+        result=self.client.post('/api/agent',json=self.request({'message':'只整理第二章知识清单'})).json()
+        self.assertEqual(result['messages'][-1]['status'],'clarify')
+        self.assertIn('起止',result['messages'][-1]['content'])
+        self.assertEqual(self.captured,[])
+
+    def test_agent_clarifies_then_executes_two_tasks_in_one_chapter(self):
+        material=self.chapter_document()
+        self.completion_queue=[self.agent_plan(message='你想做知识清单还是小测？',status='clarify')]
+        result=self.client.post('/api/agent',json=self.request({'material_ids':[material],'message':'帮我复习'})).json()
+        self.assertEqual(result['messages'][-1]['status'],'clarify')
+        tasks=[{'action':'outline','material_key':'M1','chapter_key':'C2','topic':'信号转导','instructions':'只列 1 个点'},
+               {'action':'quiz','material_key':'M1','chapter_key':'C2','topic':'信号转导','count':2}]
+        q=self.question();q['sources']=[{'source_id':'S1'}]
+        self.completion_queue=[self.agent_plan(tasks),self.completion(json.dumps(self.outline_response([{'source_id':'S1'}]))),self.completion(json.dumps({'questions':[q,q]}))]
+        response=self.client.post('/api/agent',json=self.request({'material_ids':[material],'thread_id':result['id'],'message':'只用第二章，先做清单，再出2道题'}))
+        self.assertEqual(response.status_code,200,response.text)
+        result=response.json();turn=result['messages'][-1]
+        self.assertEqual(turn['status'],'completed')
+        self.assertEqual(len(turn['results']),2)
+        self.assertEqual(len(result['messages']),4)
+        for request in self.captured[-2:]:
+            prompt=request[2]['messages'][1]['content']
+            self.assertIn('CHAPTER_2_ONLY',prompt);self.assertNotIn('CHAPTER_1_ONLY',prompt)
+        self.assertEqual(self.client.get(f'/api/agent/threads/{result["id"]}?course=biochemistry').json()['messages'],result['messages'])
+        for item in turn['results']:
+            self.assertEqual(self.client.get(f'/api/artifacts/{item["artifact_id"]}/pdf').status_code,200)
+
+    def test_agent_followup_preserves_scope_and_pdf_download_needs_no_model(self):
+        material=self.chapter_document()
+        self.completion_queue=[self.agent_plan([{'action':'outline','material_key':'M1','chapter_key':'C2'}]),self.completion(json.dumps(self.outline_response([{'source_id':'S1'}])))]
+        result=self.client.post('/api/agent',json=self.request({'material_ids':[material],'message':'只用第二章做清单'})).json()
+        self.completion_queue=[self.agent_plan([{'action':'chat','topic':'请解释刚才章节的机制'}]),self.completion(json.dumps({'answer':'解释信号转导。','follow_up':'如何调节？','sources':[{'source_id':'S1'}]}))]
+        result=self.client.post('/api/agent',json=self.request({'material_ids':[material],'thread_id':result['id'],'message':'再解释一下机制'})).json()
+        self.assertEqual(result['messages'][-1]['status'],'completed')
+        self.assertNotIn('CHAPTER_1_ONLY',self.captured[-1][2]['messages'][1]['content'])
+        calls=len(self.captured)
+        exported=self.client.post('/api/agent',json=self.request({'material_ids':[material],'thread_id':result['id'],'message':'把刚才的结果下载 PDF'})).json()
+        self.assertEqual(exported['messages'][-1]['results'][0]['artifact_id'],result['messages'][-1]['results'][0]['artifact_id'])
+        self.assertEqual(len(self.captured),calls)
+
+    def test_agent_invalid_tool_and_unknown_chapter_do_not_execute(self):
+        material=self.chapter_document()
+        for task, expected in [({'action':'delete_files'},502),({'action':'outline','material_key':'M1','chapter_key':'C99'},200)]:
+            self.captured.clear()
+            self.completion_queue=[self.agent_plan([task])]
+            response=self.client.post('/api/agent',json=self.request({'material_ids':[material],'message':'请帮我处理'}))
+            self.assertEqual(response.status_code,expected,response.text)
+            self.assertEqual(len(self.captured),1)
+        self.assertEqual(self.client.get('/api/artifacts?course=biochemistry').json(),[])
+
+    def test_agent_threads_cannot_be_used_in_another_course(self):
+        result=self.client.post('/api/agent',json={'course':'biochemistry','material_ids':[],'message':'帮我学习'}).json()
+        self.assertEqual(self.client.get(f'/api/agent/threads/{result["id"]}?course=pathology').status_code,404)
+        self.assertEqual(self.client.post('/api/agent',json={'course':'pathology','thread_id':result['id'],'message':'继续'}).status_code,404)
+        self.assertEqual(self.captured,[])
+
+    def test_parent_chapter_contains_its_subsections(self):
+        material=self.upload('sections.txt','第一章 概述\nFIRST_ONLY\n第二章 信号\nINTRO_SECOND\n第一节 受体\nRECEPTOR_ONLY\n第二节 信使\nMESSENGER_ONLY\n第三章 周期\nTHIRD_ONLY'.encode()).json()['id']
+        catalog=self.client.get(f'/api/materials/{material}/chapters').json()
+        chapter=next(c for c in catalog['chapters'] if c['title']=='第二章 信号')
+        self.response=self.outline_response([{'source_id':'S1'}])
+        result=self.client.post('/api/study/outline',json=self.request({'material_ids':[material],'scopes':[{'material_id':material,'chapter_id':chapter['id']}]}))
+        self.assertEqual(result.status_code,200,result.text)
+        prompt=self.captured[-1][2]['messages'][1]['content']
+        for value in ['INTRO_SECOND','RECEPTOR_ONLY','MESSENGER_ONLY']:self.assertIn(value,prompt)
+        for value in ['FIRST_ONLY','THIRD_ONLY']:self.assertNotIn(value,prompt)
+
+    def test_pptx_chapters_use_slide_titles_not_chapter_mentions_in_notes(self):
+        ppt=Presentation()
+        for title,body in [('第一章 细胞膜','FIRST_ONLY'),('膜转运','FIRST_MORE'),('第二章 信号','SECOND_ONLY'),('信号放大','SECOND_MORE')]:
+            slide=ppt.slides.add_slide(ppt.slide_layouts[1]);slide.shapes.title.text=title;slide.placeholders[1].text=body
+            slide.notes_slide.notes_text_frame.text='第三章 这是备注中的参考章节，不是标题'
+        buffer=io.BytesIO();ppt.save(buffer)
+        material=self.upload('chapters.pptx',buffer.getvalue()).json()['id']
+        catalog=self.client.get(f'/api/materials/{material}/chapters').json()
+        self.assertEqual([c['title'] for c in catalog['chapters']],['第一章 细胞膜','第二章 信号'])
+        self.response=self.outline_response([{'source_id':'S1'}])
+        result=self.client.post('/api/study/outline',json=self.request({'material_ids':[material],'scopes':[{'material_id':material,'chapter_id':'C2'}]}))
+        self.assertEqual(result.status_code,200,result.text)
+        prompt=self.captured[-1][2]['messages'][1]['content']
+        self.assertIn('SECOND_MORE',prompt);self.assertNotIn('FIRST_ONLY',prompt)
+
+    def test_agent_can_clear_an_explicit_range_only_when_requested(self):
+        material=self.chapter_document()
+        spec={'material_id':material,'chapter_id':'C2'}
+        self.completion_queue=[self.agent_plan([{'action':'outline','scope_mode':'all'}]),self.completion(json.dumps(self.outline_response([{'source_id':'S1'}])))]
+        result=self.client.post('/api/agent',json=self.request({'material_ids':[material],'scopes':[spec],'message':'取消限制，改成整份材料的知识清单'})).json()
+        self.assertEqual(result['messages'][-1]['status'],'completed')
+        self.assertEqual(result['last_scopes'],[])
+        self.assertIn('CHAPTER_1_ONLY',self.captured[-1][2]['messages'][1]['content'])
+        self.captured.clear()
+        self.completion_queue=[self.agent_plan([{'action':'outline','scope_mode':'all'}])]
+        result=self.client.post('/api/agent',json=self.request({'material_ids':[material],'scopes':[spec],'message':'再整理一下'})).json()
+        self.assertEqual(result['messages'][-1]['status'],'clarify')
+        self.assertEqual(len(self.captured),1)
+
+    def test_agent_ui_can_clear_saved_scope(self):
+        material=self.chapter_document()
+        result=self.client.post('/api/agent',json=self.request({'material_ids':[material],'scopes':[{'material_id':material,'chapter_id':'C2'}],'message':'帮我复习'})).json()
+        self.completion_queue=[self.agent_plan([{'action':'outline'}]),self.completion(json.dumps(self.outline_response([{'source_id':'S1'}])))]
+        result=self.client.post('/api/agent',json=self.request({'material_ids':[material],'thread_id':result['id'],'reset_scope':True,'message':'整理知识清单'})).json()
+        self.assertEqual(result['last_scopes'],[])
+        self.assertEqual(result['messages'][-1]['status'],'completed')
+        self.assertIn('CHAPTER_1_ONLY',self.captured[-1][2]['messages'][1]['content'])
+
+    def test_agent_cannot_silently_expand_scope_by_switching_files(self):
+        material=self.chapter_document()
+        other=self.upload('另一份.txt',b'OTHER_FILE_ONLY').json()['id']
+        other_key=f'M{sorted([material,other]).index(other)+1}'
+        self.completion_queue=[self.agent_plan([{'action':'outline','material_key':other_key}])]
+        result=self.client.post('/api/agent',json=self.request({'material_ids':[material,other],'scopes':[{'material_id':material,'chapter_id':'C2'}],'message':'再做一个清单'})).json()
+        self.assertEqual(result['messages'][-1]['status'],'clarify')
+        self.assertEqual(len(self.captured),1)
+
+    def test_vague_agent_request_preserves_explicit_scope_without_model_call(self):
+        material=self.chapter_document();spec={'material_id':material,'chapter_id':'C2'}
+        result=self.client.post('/api/agent',json=self.request({'material_ids':[material],'scopes':[spec],'message':'帮我复习'})).json()
+        self.assertEqual(result['messages'][-1]['status'],'clarify')
+        self.assertEqual(result['last_scopes'][0]['chapter_id'],'C2')
+        self.assertEqual(self.captured,[])
+
+    def test_agent_keeps_successful_results_when_another_tool_fails(self):
+        from fastapi import HTTPException
+        from unittest.mock import AsyncMock
+        material=self.chapter_document()
+        tasks=[{'action':'outline','material_key':'M1','chapter_key':'C2'}, {'action':'quiz','material_key':'M1','chapter_key':'C2','count':2}]
+        self.completion_queue=[self.agent_plan(tasks),self.completion(json.dumps(self.outline_response([{'source_id':'S1'}])))]
+        with patch('app.main.quiz',new=AsyncMock(side_effect=HTTPException(502,'模拟服务暂时不可用'))):
+            result=self.client.post('/api/agent',json=self.request({'material_ids':[material],'message':'只用第二章做清单和小测'})).json()
+        self.assertEqual(result['messages'][-1]['status'],'partial')
+        results=result['messages'][-1]['results']
+        self.assertEqual([r['status'] for r in results],['completed','error'])
+        self.assertEqual(self.client.get('/api/artifacts/'+results[0]['artifact_id']).status_code,200)
+
 if __name__=='__main__':
     unittest.main()

@@ -49,6 +49,9 @@ def init():
           path TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
           labels TEXT NOT NULL DEFAULT '[]', confirmed INTEGER NOT NULL DEFAULT 0,
           created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS agent_threads (
+          id TEXT PRIMARY KEY, course TEXT NOT NULL, title TEXT NOT NULL, data TEXT NOT NULL,
+          created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
         """)
 
 
