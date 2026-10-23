@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import ai, db, models, scope, agent
 from .extract import SUPPORTED, extract
-from .reporting import FIELDS, export_report
+from .reporting import FIELDS, STANDARD, export_report, template_layout, standard_document, font
 from .pdf_export import export_pdf
 
 
@@ -378,12 +378,23 @@ async def report(payload: models.ReportRequest):
         if template_row["course"] != payload.course or template_row["kind"] != "template":
             raise HTTPException(400, "请使用当前课程的报告模板。")
         template = Path(template_row["path"])
-        template_context = "\n模板结构参考（不是事实来源）：" + db.dumps(json.loads(template_row["chunks"]))[:5000]
-    task = f"为实验《{payload.title}》整理报告固定内容。sections 必须且只能包含 purpose、principle、equipment、steps、precautions 各一次。仅使用材料中明确描述的内容，未提供的器材、试剂浓度或步骤写‘材料未提供，请补充’。不得生成实验数据、实际观察、结果分析或结论。另生成 3 道实验原理/对照设计四选一课前题，answer 从 0 开始。{template_context}"
+    layout = template_layout(template)  # Reject unsupported formats before any paid request.
+    template_context = '\n学校模板章节（仅约束结构，不提供事实或示例结果）：'+db.dumps(layout)
+    task = f'''为实验《{payload.title}》写好可编辑实验报告，除真实数据、本人照片和依赖实际结果的填空外，其余有材料依据的内容完整写好，不只给提纲。
+sections 必须且只能包含 purpose、principle、equipment、steps、precautions 各一次；含目的要求、完整原理、材料仪器试剂、按分项组织的步骤与注意事项。材料中的规定浓度、时间、温度可写，不能当成本次实际测量。
+records 为具体原始记录表：subjects 列出材料要求的各观察对象/分组；fields 写需学生实际填写的字段、单位（如放大倍数、观察形态、原始读数），程序会将每个数据单元格留空。规定操作条件写入 sections，不能填成测量结果。至少一张表，不得凭空增加材料未要求的定量实验。
+figures 为每张必须粘贴的本人结果图片。逐项覆盖所选材料要求的显微照片、曲线等；每项写清 title、instruction（拍什么对象/通道/标注什么）、caption（预写图注）、fields（实际倍率、染色/通道、拍摄信息等）。显微观察实验应按观察对象列图，不能只写“插入图片”。至少一处图位；材料无指定结果图时，可为材料中已有实验装置或原始记录留图片位，说明是记录用途，不新增实验。
+analysis、discussion 各写完整的有依据的理论解释、方法比较与误差机制，不能整段留空；明确用“理论上”“若实际观察为…则…”等条件句，实际观察描述留【填写：具体内容】，不能声称已成功观察到或测得任何结果。
+conclusion 写好总结句式和已有原理，依赖真实结果的位置用【填写：本次实际结果/支持程度】；不编造第一人称经历、实验成功或个人心得。
+所有事实性段落、表与图的要求必须填写来源。未提供的试剂/仪器/条件明确写“材料未提供，请补充”，不得抄报告示例中的无依据内容。学校模板中的旧姓名、实验题目、照片和诊断不作为本次事实。
+另生成 3 道原理/对照设计四选一课前题，answer 从 0 开始。{template_context}'''
     data, evidence = await ai.structured(task, models.Report, payload.course, payload.material_ids, payload.title, payload.scopes, payload.instructions)
     if {s["key"] for s in data["sections"]} != {"purpose", "principle", "equipment", "steps", "precautions"}:
         raise HTTPException(502, "模型没有完整生成五个固定章节，请重试。")
     data["title"] = payload.title
+    data['details'] = payload.details.model_dump()
+    if not data['details']['course_name']:
+        data['details']['course_name'] = dict((c[0],c[1]) for c in db.COURSES)[payload.course]
     for section in data["sections"]:
         section["title"] = FIELDS[section["key"]]
     data = add_source_titles(data)
@@ -393,7 +404,7 @@ async def report(payload: models.ReportRequest):
     output = db.DATA / "exports" / (export_id + ".docx")
     warnings = await run_in_threadpool(export_report, data, output, template)
     linked_quiz = store(payload.course, "quiz", payload.title + " · 实验学习卡", quiz_data, evidence)
-    data.update({"export_id": export_id, "warnings": warnings, "quiz_id": linked_quiz["id"], "pending": ["实验数据", "实验结果", "分析与讨论", "实验结论"]})
+    data.update({"export_id": export_id, "warnings": warnings, "quiz_id": linked_quiz["id"]})
     return store(payload.course, "report", payload.title, data, evidence)
 
 
@@ -409,15 +420,13 @@ def export(id: str):
 
 @app.get("/api/template")
 def example_template():
-    from docx import Document
-    path = db.DATA / "exports" / "template.docx"
+    path = db.DATA / "exports" / "template-v2.docx"
     if not path.exists():
-        doc = Document()
-        doc.add_heading("{{实验名称}}", 0)
-        doc.add_paragraph("姓名：________    学号：________    日期：________")
-        for title in ["实验目的", "实验原理", "仪器与试剂", "实验步骤", "注意事项", "实验数据", "实验结果", "分析与讨论", "实验结论"]:
-            doc.add_heading(title, 1)
-            doc.add_paragraph("{{" + title + "}}")
+        doc = standard_document({},'{{实验名称}}')
+        for key,title in STANDARD:
+            p=doc.add_paragraph(title)
+            for r in p.runs: font(r,14,False,'仿宋_GB2312')
+            doc.add_paragraph('{{'+FIELDS[key]+'}}')
         doc.save(path)
     return FileResponse(path, filename="实验报告占位符模板.docx")
 

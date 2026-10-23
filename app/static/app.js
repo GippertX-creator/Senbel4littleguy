@@ -595,7 +595,7 @@ document.addEventListener("change", async event => {
   } catch (error) { toast(error.message,true); }
 });
 function pdfLink(a) {
-  return `<a class="button small pdf-download" href="/api/artifacts/${h(a.id)}/pdf">下载 PDF ↓</a>`;
+  return `<a class="button small pdf-download" href="/api/artifacts/${h(a.id)}/pdf">${a.kind === "report" ? "下载 PDF 阅读版 ↓" : "下载 PDF ↓"}</a>`;
 }
 function renderAgentResult(a) {
   if (a.kind === "outline") return renderOutline(a);
@@ -607,7 +607,7 @@ function renderAgentResult(a) {
 function agentPage() {
   const messages = state.agentThread?.messages || [];
   return heading("把学习任务交给小家伙。", "直接说需求。先问清楚范围，再整理知识、答疑、出题或准备报告。") +
-    `<section class="card agent-workspace"><div class="agent-toolbar"><label class="field"><span>当前课程的会话</span><select class="control" id="agent-thread-select"><option value="">新会话</option>${state.agentThreads.map(t => `<option value="${h(t.id)}" ${state.agentThread?.id === t.id ? "selected" : ""}>${h(t.title)}</option>`).join("")}</select></label><button class="button" type="button" data-action="new-agent">新建会话</button></div><div class="agent-thread" id="agent-thread" aria-live="polite">${messages.length ? messages.map(m => `<article class="agent-message ${m.role}"><strong>${m.role === "user" ? "你" : "小家伙"}</strong><p class="prose">${h(m.content)}</p>${(m.results || []).map(r => r.status === "completed" ? `<div class="agent-result-card"><button type="button" class="text-button" data-action="agent-result" data-id="${h(r.artifact_id)}">查看 ${h(r.title)} →</button><a class="button small" href="/api/artifacts/${h(r.artifact_id)}/pdf">下载 PDF ↓</a></div>` : `<div class="notice error">${h(r.error)}</div>`).join("")}</article>`).join("") : '<div class="agent-welcome"><img src="/assets/kitten.png" alt="小猫学习智能体"><div><h2>想学什么，直接告诉我。</h2><p>“只整理第二章的知识清单，再出 5 道小测。”<br>“我还没想好怎么复习，先帮我确定任务。”</p></div></div>'}</div><form id="agent-form">${sourceSelector()}<label class="field"><span>告诉小家伙你的要求</span><textarea name="message" rows="3" maxlength="6000" required placeholder="例如：只用这份讲义第二章，整理机制知识清单，保留网页结果并提供 PDF。不要填写 API 密钥。"></textarea></label><div class="button-row"><button type="submit" class="button primary">交给小家伙 →</button><span class="small-copy">会话与结果保存在本机；下载 PDF 不调用模型。</span></div>${taskError()}</form></section>${state.output ? renderAgentResult(state.output) : ""}`;
+    `<section class="card agent-workspace"><div class="agent-toolbar"><label class="field"><span>当前课程的会话</span><select class="control" id="agent-thread-select"><option value="">新会话</option>${state.agentThreads.map(t => `<option value="${h(t.id)}" ${state.agentThread?.id === t.id ? "selected" : ""}>${h(t.title)}</option>`).join("")}</select></label><button class="button" type="button" data-action="new-agent">新建会话</button></div><div class="agent-thread" id="agent-thread" aria-live="polite">${messages.length ? messages.map(m => `<article class="agent-message ${m.role}"><strong>${m.role === "user" ? "你" : "小家伙"}</strong><p class="prose">${h(m.content)}</p>${(m.results || []).map(r => r.status === "completed" ? `<div class="agent-result-card"><button type="button" class="text-button" data-action="agent-result" data-id="${h(r.artifact_id)}">查看 ${h(r.title)} →</button><a class="button small" href="/api/artifacts/${h(r.artifact_id)}/pdf">下载 PDF ↓</a></div>` : `<div class="notice error">${h(r.error)}</div>`).join("")}</article>`).join("") : '<div class="agent-welcome"><img src="/assets/kitten.png" alt="小猫学习智能体"><div><h2>想学什么，直接告诉我。</h2><p>“只整理第二章的知识清单，再出 5 道小测。”<br>“我还没想好怎么复习，先帮我确定任务。”</p></div></div>'}</div><form id="agent-form">${sourceSelector()}${state.materials.some(m => m.kind === "template") ? `<label class="field"><span>生成实验报告时使用的模板（选填）</span><select class="control" name="report_template_id"><option value="">五栏标准报告结构</option>${state.materials.filter(m => m.kind === "template").map(m => `<option value="${h(m.id)}">${h(m.title)}</option>`).join("")}</select></label>` : ""}<label class="field"><span>告诉小家伙你的要求</span><textarea name="message" rows="3" maxlength="6000" required placeholder="例如：只用这份讲义第二章，整理机制知识清单，保留网页结果并提供 PDF。不要填写 API 密钥。"></textarea></label><div class="button-row"><button type="submit" class="button primary">交给小家伙 →</button><span class="small-copy">会话与结果保存在本机；下载 PDF 不调用模型。</span></div>${taskError()}</form></section>${state.output ? renderAgentResult(state.output) : ""}`;
 }
 function heading(title, subtitle, eyebrow = "LEARN WITH UNDERSTANDING") {
   return `<div class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p>${subtitle}</p></div><div class="date-chip">${icon("calendar")}${new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date())}</div></div>`;
@@ -743,16 +743,24 @@ function reportPage() {
   return (
     heading(
       "少一点重复，多一点实验思考。",
-      "根据实验材料整理固定内容，留下真实数据、结果与讨论的填写位置。",
+      "按学校模板写好固定内容与理论分析，逐项标明该粘贴的图片和该填写的数据。",
       "EXPERIMENT WORKSPACE",
     ) +
     savedHistory(["report"]) +
-    `<div class="two-column"><form id="report-form" class="card">${sourceSelector()}<label class="field"><span>实验名称</span><input type="text" name="title" maxlength="100" required placeholder="例如：温度和 pH 对酶活性的影响"></label><label class="field"><span>报告模板</span><select class="control" name="template_id"><option value="">使用标准报告结构</option>${templates.map((t) => `<option value="${t.id}">${h(t.title)}</option>`).join("")}</select><small>DOCX 占位符模板可保留版式；普通模板会尝试匹配章节标题。<a href="#materials">上传学校模板 →</a></small></label><div class="notice">生成范围：实验目的、原理、仪器与试剂、步骤、注意事项。<br>数据、结果、讨论和结论由你根据实际实验填写。</div><button type="submit" class="button primary">生成报告与实验学习卡 ${icon("arrow")}</button>${taskError()}</form><aside class="aside-stack"><section class="card"><div class="card-title"><h2>一次上传，两种收获</h2></div><ul class="check-list"><li>可编辑的 Word 报告</li><li>带出处的实验原理</li><li>原理与对照设计小测</li><li>错题进入后续复习</li></ul></section><section class="card note-card"><h3>让模板匹配更准确</h3><p>下载示例，把占位符放入学校模板对应位置，即可保留字体、表格和章节结构。</p><a class="button small" style="margin-top:15px" href="/api/template">下载占位符模板 ↓</a></section></aside></div>${state.output?.kind === "report" ? renderReport(state.output) : ""}`
+    `<div class="two-column"><form id="report-form" class="card">${sourceSelector()}<label class="field"><span>实验名称</span><input type="text" name="title" maxlength="100" required placeholder="例如：温度和 pH 对酶活性的影响"></label><label class="field"><span>报告模板</span><select class="control" name="template_id"><option value="">使用标准报告结构</option>${templates.map((t) => `<option value="${t.id}">${h(t.title)}</option>`).join("")}</select><small>保留 DOCX 模板章节、封面和页边距，清除旧正文与示例图片；不识别的格式会先提示。<a href="#materials">上传学校模板 →</a></small></label><details class="report-details"><summary>填写封面信息（选填，可在 Word 中补填）</summary><div class="form-grid">${[["course_name","课程名称"],["name","姓名"],["student_id","学号"],["college","学院"],["department","系"],["major","专业"],["instructor","指导老师"],["group","同组学生"],["location","实验地点"],["date","实验日期"],["experiment_type","实验类型"]].map(([key,label]) => `<label class="field"><span>${label}</span><input type="text" name="detail_${key}" maxlength="${key === "group" ? 200 : 100}" placeholder="未填时保留空白，不沿用模板示例信息"></label>`).join("")}</div></details><label class="field"><span>补充格式与内容要求（选填）</span><textarea name="instructions" maxlength="2000" rows="2" placeholder="例如：每个观察对象单独留图框，注明通道和倍率；使用学校五栏格式。"></textarea></label><div class="notice">目的、原理、器材、步骤及有依据的理论分析讨论会预先写好。<br>每张图片和每项原始记录都有具体填写位置；实际观察和依赖结果的结论保留标记，不编造实验结果。</div><button type="submit" class="button primary">生成报告与实验学习卡 ${icon("arrow")}</button>${taskError()}</form><aside class="aside-stack"><section class="card"><div class="card-title"><h2>一次上传，两种收获</h2></div><ul class="check-list"><li>按模板排版的 Word 报告</li><li>逐项照片框、图注与数据表</li><li>有出处的理论分析与讨论</li><li>原理与对照设计小测</li><li>错题进入后续复习</li></ul></section><section class="card note-card"><h3>让模板匹配更准确</h3><p>支持“实验目的和要求”“实验内容和原理”“主要仪器设备”“实验结果与分析”“讨论、心得”等学校标题。没有模板时使用五栏标准结构；也可下载空白模板。</p><a class="button small" style="margin-top:15px" href="/api/template">下载占位符模板 ↓</a></section></aside></div>${state.output?.kind === "report" ? renderReport(state.output) : ""}`
   );
+}
+function reportBlock(b) {
+  if (b.kind === "table") return `<div class="report-record"><h4>${h(b.title)}</h4><div class="report-table-scroll"><table class="report-record-table"><thead><tr>${[b.subject_label,...b.fields].map(t => `<th>${h(t)}</th>`).join("")}</tr></thead><tbody>${b.subjects.map(subject => `<tr><th>${h(subject)}</th>${b.fields.map(field => `<td class="report-fill">【填写：${h(field)}】</td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="small-copy">${h(b.note)}</p>${sources(b.sources)}</div>`;
+  if (b.kind === "figure") return `<div class="report-figure"><div class="report-photo-slot"><strong>在此粘贴图 ${b.index}：${h(b.title)}</strong><p class="prose">${h(b.instruction)}</p><small>请在下载的 Word 中插入本人本次实验图片</small></div><p class="report-caption">图 ${b.index}　${h(b.caption)}</p>${b.fields.map(field => `<p class="report-fill">【填写：${h(field)}】</p>`).join("")}<p class="report-fill">实际观察：【填写本图真实观察到的结构、颜色、形态与分布；未观察到也如实记录】</p>${sources(b.sources)}</div>`;
+  return `<div class="report-prose">${b.title ? `<h4>${h(b.title)}</h4>` : ""}<p class="prose">${h(b.content)}</p>${sources(b.sources)}</div>`;
 }
 function renderReport(a) {
   const d = a.data;
-  return `<section class="result-container">${coverage(d)}<div class="result-heading"><h2>${h(d.title)}</h2><div class="button-row" style="margin-top:0"><a class="button primary" href="/api/exports/${d.export_id}">下载 Word ↓</a>${pdfLink(a)}<button class="button soft" data-action="artifact" data-id="${d.quiz_id}">实验学习卡 ${icon("arrow")}</button></div></div>${d.warnings.map((w) => `<div class="notice warn">${h(w)}</div>`).join("")}<section class="card">${d.sections.map((s) => `<div class="report-section"><h3>${h(s.title)}</h3><p class="prose">${h(s.content)}</p>${sources(s.sources)}</div>`).join("")}<div class="pending-section">以下内容保留为待填写：${d.pending.map((p) => h(p)).join(" / ")}。<br>请核对固定内容是否与本次实验操作及教师要求一致。</div></section></section>`;
+  const details = d.details || {};
+  const content = d.document_sections ? d.document_sections.map(s => `<div class="report-section"><h3>${h(s.title)}</h3>${s.blocks.map(reportBlock).join("")}</div>`).join("") : d.sections.map(s => `<div class="report-section"><h3>${h(s.title)}</h3><p class="prose">${h(s.content)}</p>${sources(s.sources)}</div>`).join("");
+  const cover = d.document_sections ? `<div class="report-cover-preview"><strong>实验项目：${h(d.title)}</strong><p>${[["course_name","课程"],["name","姓名"],["student_id","学号"],["date","日期"]].map(([k,label]) => `${label}：${h(details[k] || "待填写")}`).join("　")}</p></div>` : "";
+  return `<section class="result-container">${coverage(d)}<div class="result-heading"><h2>${h(d.title)}</h2><div class="button-row" style="margin-top:0"><a class="button primary" href="/api/exports/${d.export_id}">下载 Word ↓</a>${pdfLink(a)}<button class="button soft" data-action="artifact" data-id="${d.quiz_id}">实验学习卡 ${icon("arrow")}</button></div></div>${d.warnings.map(w => `<div class="notice warn">${h(w)}</div>`).join("")}<section class="card">${cover}${content}<div class="pending-section">需要补充：${d.pending.map(p => h(p)).join(" / ")}。<br>理论说明已写好，请依据本次真实记录填写标记位置并核对教师要求。</div></section></section>`;
 }
 function practicePage() {
   const compare = state.practiceTab === "compare";
@@ -904,7 +912,7 @@ document.addEventListener("submit", (event) => {
   const button = $("button[type=submit]", form);
   task(button, async () => {
     if (form.id === "agent-form") {
-      const result = await post("/agent", { course: state.course, material_ids: [...state.selected], scopes: studyScopes(), reset_scope: state.scopeState.mode === "all", thread_id: state.agentThread?.id || null, message: fields.get("message") });
+      const result = await post("/agent", { course: state.course, material_ids: [...state.selected], scopes: studyScopes(), reset_scope: state.scopeState.mode === "all", report_template_id: fields.get("report_template_id") || null, thread_id: state.agentThread?.id || null, message: fields.get("message") });
       state.agentThread = result;
       await applyAgentScope(result);
       const latest = result.messages.at(-1)?.results?.find(r => r.status === "completed");
@@ -989,6 +997,10 @@ document.addEventListener("submit", (event) => {
       if (mode === "report") {
         endpoint = "/reports";
         values.template_id = values.template_id || null;
+        values.details = {};
+        for (const key of Object.keys(values)) {
+          if (key.startsWith("detail_")) { values.details[key.slice(7)] = values[key]; delete values[key]; }
+        }
       }
       if (mode === "quiz") values.count = Number(values.count);
       const savedTeach =

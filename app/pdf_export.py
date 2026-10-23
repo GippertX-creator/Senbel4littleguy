@@ -66,6 +66,27 @@ def blocks(artifact):
                 yield citations(item["sources"]), 9
         yield "下一步："+data["next_question"], 11
     elif kind == "report":
+        if data.get('document_sections'):
+            from .reporting import record_rows, figure_text
+            details=data.get('details',{})
+            for label,key in [('课程','course_name'),('姓名','name'),('学号','student_id'),('专业','major'),('日期','date'),('地点','location')]:
+                yield f'{label}：{details.get(key) or "____________"}',10
+            yield '阅读版：章节与网页一致；学校模板精确版式请使用 Word 或在 Word/WPS 中另存 PDF。',10
+            for section in data['document_sections']:
+                yield section['title'],14
+                for block in section['blocks']:
+                    if block['kind']=='figure':yield figure_text(block,block['index']),11
+                    elif block['kind']=='table':
+                        if block['title']:yield block['title'],12
+                        for row in record_rows(block):
+                            yield row[0],11
+                            for field,value in zip(block['fields'],row[1:]):yield field+'：'+value,10
+                        if block['note']:yield block['note'],10
+                    else:
+                        if block['title']:yield block['title'],12
+                        yield block['content'],11
+                    if block.get('sources'):yield citations(block['sources']),9
+            return
         for item in data["sections"]:
             yield item["title"], 14
             yield item["content"], 11

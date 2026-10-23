@@ -80,8 +80,15 @@ class WorkbenchTests(unittest.TestCase):
         return result.json()
 
     def report_response(self):
+        prose=lambda title,content:{'title':title,'content':content,'sources':[self.ref.copy()]}
         return {"title":"酶活性实验", "sections":[{"key":key,"title":title,"content":f"固定内容：{title}","sources":[self.ref.copy()]} for key,title in [
-            ("purpose","实验目的"),("principle","实验原理"),("equipment","仪器与试剂"),("steps","实验步骤"),("precautions","注意事项")]], "pre_questions":[self.question() for _ in range(3)]}
+            ("purpose","实验目的"),("principle","实验原理"),("equipment","仪器与试剂"),("steps","实验步骤"),("precautions","注意事项")]],
+            'records':[{'title':'原始数据记录','subjects':['对照组','实验组'],'fields':['真实实验数据（单位按原始记录）','观察现象'],'note':'按实际记录填写。','sources':[self.ref.copy()]}],
+            'figures':[{'title':'本次实验记录图','instruction':'粘贴实验组与对照组的本人记录图片，并标明分组。','caption':'本次实验记录对照','fields':['分组与拍摄时间'],'sources':[self.ref.copy()]}],
+            'analysis':[prose('理论分析','控制其他条件一致才能比较温度的影响；实际结果为【填写：观察或读数】。')],
+            'discussion':[prose('讨论与误差','若其他条件变化，则不能仅将差异归因于温度。')],
+            'conclusion':prose('实验结论','根据真实结果填写结论：【填写：本次观察及支持程度】。'),
+            "pre_questions":[self.question() for _ in range(3)]}
 
     def test_health_and_frontend(self):
         self.assertEqual(self.client.get("/api/health").json()["status"],"ok")
@@ -488,7 +495,7 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(export.status_code,200)
         rendered=Document(io.BytesIO(export.content))
         self.assertEqual(rendered.paragraphs[0].text,'酶活性实验')
-        self.assertEqual(rendered.tables[0].cell(0,0).text,'固定内容：实验目的')
+        self.assertIn('固定内容：实验目的',rendered.tables[0].cell(0,0).text)
         self.assertIn('真实实验数据',rendered.tables[0].cell(1,0).text)
         all_text='\n'.join(p.text for p in rendered.paragraphs)
         self.assertIn('根据真实结果填写结论',all_text)
@@ -504,7 +511,7 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(list((db.DATA/'exports').iterdir()),[])
 
     def test_headings_template_removes_example_conclusions(self):
-        doc=Document();doc.add_paragraph('姓名：____');doc.add_heading('一、实验目的',1);doc.add_paragraph('旧目的');doc.add_heading('实验结论',1);doc.add_paragraph('样例结论：全部成功')
+        doc=Document();doc.add_heading('{{实验名称}}',0);doc.add_paragraph('姓名：____');doc.add_heading('一、实验目的',1);doc.add_paragraph('旧目的');doc.add_heading('实验结论',1);doc.add_paragraph('样例结论：全部成功')
         buffer=io.BytesIO();doc.save(buffer)
         template=self.upload('school.docx',buffer.getvalue(),kind='template').json()['id']
         self.response=self.report_response()
@@ -512,7 +519,111 @@ class WorkbenchTests(unittest.TestCase):
         rendered=Document(io.BytesIO(self.client.get('/api/exports/'+data['export_id']).content))
         text='\n'.join(p.text for p in rendered.paragraphs)
         self.assertNotIn('全部成功',text);self.assertNotIn('旧目的',text)
-        self.assertIn('姓名：____',text);self.assertIn('固定内容：实验目的',text)
+        self.assertNotIn('{{实验名称}}',text);self.assertEqual(rendered.paragraphs[0].text,'实验')
+        self.assertIn('姓名： ______',text);self.assertIn('固定内容：实验目的',text)
+
+    def test_school_report_keeps_five_sections_and_removes_sample_content(self):
+        from zipfile import ZipFile
+        from docx.shared import Cm
+        from app.reporting import STANDARD, headings
+        doc=Document();doc.sections[0].left_margin=Cm(3.175)
+        logo=io.BytesIO();Image.new('RGB',(20,20),'red').save(logo,'PNG');logo.seek(0);doc.add_picture(logo)
+        doc.add_paragraph('课程名称：旧课程 实验类型：旧类型')
+        doc.add_paragraph('实验项目名称：旧实验')
+        doc.add_paragraph('学生姓名：TEMPLATE_PERSON_X 专业：旧专业 学号：OLD_STUDENT_ID')
+        doc.add_paragraph('2025年9月28日')
+        cover=doc.add_table(rows=1,cols=2);cover.cell(0,0).text='姓名：';cover.cell(0,1).text='TEMPLATE_PERSON_X'
+        sample=io.BytesIO();Image.new('RGB',(30,30),'blue').save(sample,'PNG');sample.seek(0)
+        for key,title in STANDARD:
+            doc.add_paragraph(title)
+            doc.add_paragraph('旧正文样例，不是本次记录')
+            if key=='results':
+                doc.add_picture(sample)
+                doc.add_table(rows=1,cols=1).cell(0,0).text='旧结果：99999'
+                doc.add_paragraph('（一）实验结果');doc.add_paragraph('本次成功：样例断言')
+        buf=io.BytesIO();doc.save(buf)
+        template=self.upload('学校五栏.docx',buf.getvalue(),kind='template').json()['id']
+        self.response=self.report_response()
+        response=self.client.post('/api/reports',json=self.request({'title':'新实验','template_id':template,'details':{'name':'新姓名','student_id':'NEW_ID','date':'2026-10-23','course_name':'新课程'}}))
+        self.assertEqual(response.status_code,200,response.text)
+        data=response.json()['data'];self.assertEqual(data['format_version'],2)
+        self.assertEqual([s['title'] for s in data['document_sections']],[t for _,t in STANDARD])
+        content=self.client.get('/api/exports/'+data['export_id']).content
+        rendered=Document(io.BytesIO(content))
+        self.assertEqual([p.text for p,_ in headings(rendered)],[t for _,t in STANDARD])
+        self.assertEqual(rendered.sections[0].left_margin,Cm(3.175))
+        self.assertEqual(len(rendered.inline_shapes),1)  # Preserve cover logo, discard example image.
+        with ZipFile(io.BytesIO(content)) as z:
+            xml='\n'.join(z.read(n).decode('utf8') for n in z.namelist() if n.endswith('.xml'))
+            for old in ['TEMPLATE_PERSON_X','OLD_STUDENT_ID','旧正文','旧结果：99999','样例断言','2025年9月28日']:self.assertTrue(old not in xml,old)
+            self.assertEqual(len([n for n in z.namelist() if n.startswith('word/media/')]),1)
+        for token in ['新姓名','NEW_ID','2026-10-23','新课程','在此粘贴图 1','观察现象','理论分析','讨论与误差']:self.assertIn(token,xml)
+        prompt=self.captured[-1][2]['messages'][-1]['content']
+        for old in ['TEMPLATE_PERSON_X','OLD_STUDENT_ID','99999','新姓名']:self.assertNotIn(old,prompt)
+
+    def test_report_unknown_or_non_docx_template_fails_before_model_call(self):
+        for name in ['无标题.docx','格式.txt']:
+            doc=Document();doc.add_paragraph('学校表单，未知格式')
+            buf=io.BytesIO();doc.save(buf)
+            template=self.upload(name,buf.getvalue() if name.endswith('docx') else b'plain template',kind='template').json()['id']
+            result=self.client.post('/api/reports',json=self.request({'title':'实验','template_id':template}))
+            self.assertEqual(result.status_code,400,result.text)
+        self.assertEqual(self.captured,[])
+        self.assertEqual(self.client.get('/api/artifacts?course=biochemistry').json(),[])
+
+    def test_report_requires_records_figures_and_prepared_analysis(self):
+        for invalid in ['records','figures','conclusion']:
+            self.response=self.report_response()
+            if invalid=='records':self.response.pop('records')
+            elif invalid=='figures':self.response['figures']=[]
+            else:self.response['conclusion']['content']='本次实验已经成功。'
+            result=self.client.post('/api/reports',json=self.request({'title':'实验'}))
+            self.assertEqual(result.status_code,502,result.text)
+            self.assertEqual(list((db.DATA/'exports').iterdir()),[])
+
+    def test_report_web_and_pdf_share_specific_observation_slots(self):
+        self.response=self.report_response()
+        result=self.client.post('/api/reports',json=self.request({'title':'实验'})).json()
+        data=result['data'];self.assertEqual(len(data['document_sections']),5)
+        table=next(b for s in data['document_sections'] for b in s['blocks'] if b['kind']=='table')
+        self.assertEqual(table['subjects'],['对照组','实验组'])
+        pdf=self.client.get('/api/artifacts/'+result['id']+'/pdf')
+        with fitz.open(stream=pdf.content,filetype='pdf') as d:text=''.join(p.get_text() for p in d)
+        for phrase in ['在此粘贴图 1','分组与拍摄时间','真实实验数据','理论分析','讨论与误差','根据真实结果填写结论']:self.assertIn(phrase,text)
+        self.assertNotIn('设计温度实验时',text)
+
+    def test_report_table_heading_form_keeps_outer_form(self):
+        doc=Document();table=doc.add_table(rows=2,cols=2)
+        table.cell(0,0).text='实验目的和要求（必填）';table.cell(0,1).text='旧目的'
+        table.cell(1,0).text='实验结果与分析（必填）';table.cell(1,1).text='旧观察'
+        buf=io.BytesIO();doc.save(buf)
+        template=self.upload('表格式.docx',buf.getvalue(),kind='template').json()['id']
+        self.response=self.report_response()
+        response=self.client.post('/api/reports',json=self.request({'title':'实验','template_id':template}))
+        self.assertEqual(response.status_code,200,response.text)
+        raw=self.client.get('/api/exports/'+response.json()['data']['export_id']).content
+        doc=Document(io.BytesIO(raw));self.assertEqual(len(doc.tables[0].rows),2)
+        self.assertIn('固定内容：实验目的',doc.tables[0].cell(0,1).text)
+        self.assertIn('理论分析',doc.tables[0].cell(1,1).text)
+        self.assertNotIn('旧观察',doc.tables[0].cell(1,1).text)
+
+    def test_agent_report_uses_selected_school_template(self):
+        from app.reporting import STANDARD
+        doc=Document()
+        for _,title in STANDARD:doc.add_paragraph(title);doc.add_paragraph('旧示例')
+        buf=io.BytesIO();doc.save(buf)
+        template=self.upload('学校模板.docx',buf.getvalue(),kind='template').json()['id']
+        self.completion_queue=[self.agent_plan([{'action':'report','topic':'酶活性实验'}]),self.completion(json.dumps(self.report_response()))]
+        response=self.client.post('/api/agent',json=self.request({'message':'根据指导书生成实验报告','report_template_id':template}))
+        self.assertEqual(response.status_code,200,response.text)
+        turn=response.json()['messages'][-1];self.assertEqual(turn['status'],'completed')
+        artifact=self.client.get('/api/artifacts/'+turn['results'][0]['artifact_id']).json()
+        self.assertEqual(artifact['data']['template_sections'],[t for _,t in STANDARD])
+        self.captured.clear()
+        self.completion_queue=[self.agent_plan([{'action':'report','topic':'酶活性实验'}])]
+        response=self.client.post('/api/agent',json=self.request({'message':'生成报告','report_template_id':'missing'}))
+        self.assertEqual(response.json()['messages'][-1]['status'],'clarify')
+        self.assertEqual(len(self.captured),1)
 
     def test_figure_labels_hidden_grade_aliases_and_review_cue(self):
         image=Image.new('RGB',(200,100),'white');buffer=io.BytesIO();image.save(buffer,'PNG')

@@ -69,6 +69,13 @@ class ModelStub(BaseHTTPRequestHandler):
                 ('purpose','实验目的','观察温度对酶活性的影响。'),('principle','实验原理','温度与 pH 会影响酶活性。'),
                 ('equipment','仪器与试剂','试管、淀粉酶。'),('steps','实验步骤','设置温度梯度，保持其他条件一致。'),
                 ('precautions','注意事项','使用对照组。')]], 'pre_questions':[question,question,question]}
+            result.update({
+                'records':[{'title':'温度分组原始记录','subjects':['实验组','对照组'],'fields':['温度（℃）','观察或原始读数'],'note':'填入本次真实记录。','sources':refs}],
+                'figures':[{'title':'实验组与对照组记录图','instruction':'粘贴本人本次实验图片，标明分组。','caption':'不同条件下的实验记录','fields':['拍摄时间与实验组别'],'sources':refs}],
+                'analysis':[{'title':'理论分析','content':'保持其他条件一致，才可比较温度的作用；实际读数为【填写：原始数据】。','sources':refs}],
+                'discussion':[{'title':'对照与误差','content':'若其他条件改变，差异不能只归因于温度。','sources':refs}],
+                'conclusion':{'title':'结论','content':'本次真实结果为【填写：实际结果】，对上述原理的支持程度为【填写：判断】。','sources':refs},
+            })
         elif '"title": "Answer"' in prompt:
             result = {'answer':'研究温度的作用时，应保持其他条件一致。','follow_up':'你会如何设置对照？','sources':refs}
         else:
@@ -92,6 +99,7 @@ def free_port():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--screenshot',type=Path)
+    parser.add_argument('--report-screenshots',type=Path)
     parser.add_argument('--browser-path',default=shutil.which('chromium'))
     args = parser.parse_args()
     server = ThreadingHTTPServer(('127.0.0.1',0),ModelStub)
@@ -226,8 +234,27 @@ def main():
                     nav('teach');page.locator('[name=topic]').fill('温度与酶活性');page.locator('[name=explanation]').fill('温度会影响酶活性。');page.locator('#teach-form button[type=submit]').click()
                     expect(page.locator('.result-container')).to_contain_text('补充如何保持其他条件一致')
                     expect(page.locator('[name=explanation]')).to_have_value('温度会影响酶活性。')
-                    nav('report');expect(page.locator('[name=title]')).to_have_value('保留的报告标题');page.locator('[name=title]').fill('温度对酶活性的影响');page.locator('#report-form button[type=submit]').click()
+                    nav('report');expect(page.locator('[name=title]')).to_have_value('保留的报告标题');page.locator('[name=title]').fill('温度对酶活性的影响')
+                    page.locator('.report-details summary').click()
+                    page.locator('[name=detail_name]').fill('演示同学')
+                    page.locator('[name=detail_course_name]').fill('生物化学实验')
+                    page.locator('[name=instructions]').fill('每项实验记录单独标明图片与数据填写位置。')
+                    if args.report_screenshots:
+                        page.locator('.report-details summary').click()
+                        args.report_screenshots.mkdir(parents=True,exist_ok=True)
+                        page.evaluate("window.scrollTo({top:0,behavior:'instant'})")
+                        page.screenshot(path=str(args.report_screenshots/'08-report-form.png'),full_page=True,animations='disabled')
+                    page.locator('#report-form button[type=submit]').click()
                     expect(page.locator('.report-section')).to_have_count(5)
+                    expect(page.locator('.report-photo-slot')).to_have_count(1)
+                    expect(page.locator('.report-record-table')).to_contain_text('观察或原始读数')
+                    expect(page.locator('.report-cover-preview')).to_contain_text('演示同学')
+                    expect(page.locator('.report-prose')).to_contain_text(['观察温度','温度与','设置温度','使用对照组','试管','实际读数','若其他条件','支持程度'])
+                    if args.report_screenshots:
+                        page.locator('.report-section').nth(3).screenshot(path=str(args.report_screenshots/'09-report-result.png'),animations='disabled')
+                    page.set_viewport_size({'width':390,'height':844})
+                    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth'),'Mobile report overflows'
+                    page.set_viewport_size({'width':1440,'height':1050})
                     with page.expect_download() as download:
                         page.get_by_role('link',name='下载 Word ↓').click()
                     file_path=download.value.path();assert Path(file_path).stat().st_size>1000

@@ -38,3 +38,18 @@
   .agent-result-card { flex-wrap: wrap; }
   .range-selector { padding: 14px; }
 }
+.report-details { margin: 0 0 22px; border: 1px solid var(--line); border-radius: 12px; padding: 15px; }
+.report-details summary { cursor: pointer; color: #65477d; font-weight: 600; }
+.report-details .form-grid { margin-top: 15px; }
+.report-cover-preview { padding: 18px; background: #faf6fd; border-radius: 12px; margin-bottom: 25px; }
+.report-cover-preview p { margin-top: 10px; line-height: 1.9; }
+.report-prose, .report-record, .report-figure { margin: 20px 0 26px; }
+.report-prose h4, .report-record h4 { margin-bottom: 10px; font-size: 17px; }
+.report-table-scroll { max-width: 100%; overflow-x: auto; margin: 12px 0; }
+.report-record-table { width: 100%; border-collapse: collapse; min-width: 460px; }
+.report-record-table th, .report-record-table td { border: 1px solid #dfd1e7; padding: 12px; text-align: left; font-size: 15px; line-height: 1.8; }
+.report-record-table th { background: #f7f1fb; font-weight: 600; }
+.report-fill { color: #70517f; line-height: 1.9; }
+.report-photo-slot { padding: 28px 22px; min-height: 170px; display: flex; flex-direction: column; justify-content: center; border: 2px dashed #bda0ce; background: #fcf9ff; border-radius: 12px; gap: 12px; }
+.report-photo-slot small { color: #796783; line-height: 1.8; }
+.report-caption { text-align: center; line-height: 1.9; margin: 12px 0; }

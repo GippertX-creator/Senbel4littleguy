@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Source(BaseModel):
@@ -79,10 +79,42 @@ class ReportSection(Cited):
     content: str
 
 
+class ReportRecord(Cited):
+    title: str = Field(min_length=1, max_length=150)
+    subject_label: str = Field(default="观察对象 / 实验分组", max_length=80)
+    subjects: list[str] = Field(min_length=1, max_length=20)
+    fields: list[str] = Field(min_length=1, max_length=8)
+    note: str = Field(default="", max_length=1000)
+
+
+class ReportFigure(Cited):
+    title: str = Field(min_length=1, max_length=150)
+    instruction: str = Field(min_length=1, max_length=1500)
+    caption: str = Field(min_length=1, max_length=500)
+    fields: list[str] = Field(min_length=1, max_length=8)
+
+
+class ReportProse(Cited):
+    title: str = Field(min_length=1, max_length=150)
+    content: str = Field(min_length=1, max_length=6000)
+
+
 class Report(BaseModel):
     title: str
     sections: list[ReportSection] = Field(min_length=5, max_length=5)
+    records: list[ReportRecord] = Field(min_length=1, max_length=10)
+    figures: list[ReportFigure] = Field(min_length=1, max_length=12)
+    analysis: list[ReportProse] = Field(min_length=1, max_length=10)
+    discussion: list[ReportProse] = Field(min_length=1, max_length=10)
+    conclusion: ReportProse
     pre_questions: list[Question] = Field(min_length=2, max_length=4)
+
+    @field_validator('conclusion')
+    @classmethod
+    def conclusion_needs_actual_result(cls,value):
+        if '【填写：' not in value.content:
+            raise ValueError('结论须保留本次实际结果的明确填写位置')
+        return value
 
 
 class MaterialScope(BaseModel):
@@ -119,9 +151,24 @@ class CompareRequest(StudyRequest):
     right: str = Field(min_length=1, max_length=80)
 
 
+class ReportDetails(BaseModel):
+    course_name: str = Field(default="", max_length=100)
+    name: str = Field(default="", max_length=100)
+    student_id: str = Field(default="", max_length=100)
+    college: str = Field(default="", max_length=100)
+    department: str = Field(default="", max_length=100)
+    major: str = Field(default="", max_length=100)
+    instructor: str = Field(default="", max_length=100)
+    group: str = Field(default="", max_length=200)
+    location: str = Field(default="", max_length=100)
+    date: str = Field(default="", max_length=100)
+    experiment_type: str = Field(default="", max_length=100)
+
+
 class ReportRequest(StudyRequest):
     title: str = Field(min_length=1, max_length=100)
     template_id: str | None = None
+    details: ReportDetails = Field(default_factory=ReportDetails)
 
 
 class AgentTask(BaseModel):
@@ -147,6 +194,7 @@ class AgentPlan(BaseModel):
 
 class AgentRequest(StudyRequest):
     reset_scope: bool = False
+    report_template_id: str | None = Field(default=None, max_length=100)
     message: str = Field(min_length=1, max_length=6000)
     thread_id: str | None = Field(default=None, max_length=100)
 
